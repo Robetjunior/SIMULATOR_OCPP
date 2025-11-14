@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Simulador OCPP 1.6J</title>
+    <link rel="stylesheet" href="assets/css/main.css" />
+  </head>
+  <body>
+    <header class="header">
+      <div class="cp-info">
+        <h1 id="cpName">Charge Point</h1>
+        <span id="statusBadge" class="badge status-available">Available</span>
+        <span id="wsStatus" class="ws-status"></span>
+        <span id="socBadge" class="badge">Carregado: <span id="socBadgeValue">0%</span></span>
+      </div>
+      <nav class="top-actions">
+        <button id="btnConnect" class="btn">Conectar</button>
+        <button id="btnDisconnect" class="btn btn-secondary">Desconectar</button>
+        <button id="btnStart" class="btn">Iniciar</button>
+        <button id="btnStop" class="btn btn-danger" disabled>Parar Carregamento</button>
+      </nav>
+    </header>
+
+    <section class="config">
+      <h2>Configurações</h2>
+      <div class="grid grid-2">
+        <label>
+          Endpoint URL (CSMS)
+          <input id="endpointUrl" type="text" placeholder="ws://host:port/ocpp/CentralSystemService/<chargePointId>" />
+        </label>
+        <label>
+          Subprotocol(s)
+          <input id="subprotocols" type="text" placeholder="ocpp1.6j,ocpp1.6" />
+        </label>
+        <label>
+          Id CP
+          <input id="chargePointId" type="text" placeholder="DRBAKANA-TEST-03" />
+        </label>
+        <label>
+          Connector Id
+          <input id="connectorId" type="number" value="1" />
+        </label>
+        <label>
+          idTag
+          <input id="idTag" type="text" placeholder="USUARIO-123" />
+        </label>
+        <label>
+          Meter Start (Wh)
+          <input id="meterStart" type="number" value="0" />
+        </label>
+        <label>
+          Meter Stop (Wh)
+          <input id="meterStop" type="number" value="0" />
+        </label>
+        <label>
+          Preço Unit. (R$/kWh)
+          <input id="pricePerKWh" type="number" step="0.01" value="1.99" />
+        </label>
+        <label>
+          Meta SoC (%)
+          <input id="targetSoc" type="number" min="50" max="100" value="80" />
+        </label>
+        <label style="align-items:center; flex-direction:row; gap:8px;">
+          <input id="fastMode" type="checkbox" />
+          <span>Modo Rápido (simulação acelerada)</span>
+        </label>
+        <label>
+          Intervalo MeterValues (s)
+          <input id="meterIntervalSec" type="number" min="1" value="10" />
+        </label>
+        <label style="align-items:center; flex-direction:row; gap:8px;">
+          <input id="realProfile" type="checkbox" />
+          <span>Perfil Real (AC) — sem SoC; fases/location</span>
+        </label>
+      </div>
+    </section>
+
+    <main class="main">
+      <section class="panel">
+        <div class="panel-header">
+          <div>Connector <strong id="connectorLabel">1</strong></div>
+          <div class="gauge">
+            <div class="gauge-circle" id="socGauge">
+              <div class="gauge-value" id="socValue">0%</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="cards grid grid-3">
+          <div class="card"><div class="label">Potência</div><div class="value"><span id="powerKW">0.00</span> kW</div></div>
+          <div class="card"><div class="label">Tensão</div><div class="value"><span id="voltageV">0</span> V</div></div>
+          <div class="card"><div class="label">Corrente</div><div class="value"><span id="currentA">0.00</span> A</div></div>
+          <div class="card"><div class="label">Duração</div><div class="value"><span id="durationMin">0</span> min</div></div>
+          <div class="card"><div class="label">Valor Total</div><div class="value">R$ <span id="totalCost">0.00</span></div></div>
+          <div class="card"><div class="label">Energia</div><div class="value"><span id="energyKWh">0.000</span> kWh</div></div>
+          <div class="card"><div class="label">Preço Unit.</div><div class="value">R$/kWh <span id="priceUnit">0.00</span></div></div>
+          <div class="card"><div class="label">Temperatura</div><div class="value"><span id="temperatureC">0.0</span> °C</div></div>
+          <div class="card"><div class="label">Início</div><div class="value"><span id="startTime">--:--</span></div></div>
+        </div>
+      </section>
+
+      <section class="log">
+        <h2>Log</h2>
+        <div class="log-actions">
+          <button id="btnClearLog" class="btn btn-secondary">Limpar Log</button>
+          <button id="btnExportHistory" class="btn">Exportar Histórico</button>
+        </div>
+        <pre id="logOutput" class="log-output"></pre>
+      </section>
+
+      <section class="history">
+        <h2>Histórico de Sessões</h2>
+        <ul id="historyList" class="history-list"></ul>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="bottom-nav">
+        <a href="#">Início</a>
+        <a href="#">Carga</a>
+        <a href="#">Histórico</a>
+        <a href="#">Conta</a>
+      </div>
+    </footer>
+
+    <script src="assets/js/state.js"></script>
+    <script src="assets/js/telemetry.js"></script>
+    <script src="assets/js/simulator.js"></script>
+
+    <!-- Modal: Meta de carga atingida -->
+    <div id="goalModalBackdrop" class="modal-backdrop hidden">
+      <div class="modal">
+        <h3 id="goalModalTitle">Meta de carga atingida</h3>
+        <p id="goalModalMessage">A bateria atingiu a meta definida.</p>
+        <div class="modal-actions">
+          <button id="goalModalClose" class="btn">Ok</button>
+        </div>
+      </div>
+    </div>
+  </body>
+  </html>
