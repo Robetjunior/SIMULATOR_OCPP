@@ -27,8 +27,11 @@
     }[state] || "status-available";
     badge.className = `badge ${cls}`;
     badge.textContent = state;
-    // controle botão parar
-    $("btnStop").disabled = state !== ChargeState.Charging;
+    // controle botões
+    const startBtn = $("btnStart");
+    const stopBtn = $("btnStop");
+    if (stopBtn) stopBtn.disabled = state !== ChargeState.Charging || Boolean(uiFlags.stopping);
+    if (startBtn) startBtn.disabled = !(state === ChargeState.Available || state === ChargeState.Preparing) || !isWsOpen() || Boolean(uiFlags.starting);
   }
 
   function updateGauge(percent) {
@@ -218,7 +221,7 @@
       const targetSocCfg = Number($("targetSoc").value || telemetry.targetSoc || 80);
       if (transactionId && m.soc >= targetSocCfg) {
         if (!goalModalShown) { goalModalShown = true; showGoalModal(Math.round(m.soc)); }
-        stopTransactionFlow();
+        stopTransactionFlow("UserDefinedLimit");
         return;
       }
 
@@ -259,6 +262,32 @@
       .catch(() => {});
   }
 
+  function installRemoteHook() {
+    try {
+      const s = window.getOcppWs && window.getOcppWs();
+      if (!s) return;
+      if (window._remoteHookEnabled) return;
+      window._remoteHookEnabled = true;
+      s.addEventListener("message", function(ev){
+        let m;
+        try { m = JSON.parse(ev.data); } catch(e){ return; }
+        if (Array.isArray(m) && m[0] === 2 && m[2] === "RemoteStartTransaction"){
+          const uid = m[1];
+          const p = m[3] || {};
+          const idTag = String(p.idTag || window.DEFAULT_IDTAG || "IGEA-USER-001");
+          const connectorId = Number(p.connectorId || window.DEFAULT_CONNECTOR_ID || 1);
+          try { s.send(JSON.stringify([3, uid, { status: "Accepted" }])); } catch(e){}
+          try { window.startTransactionFlow({ idTag, connectorId }); } catch(e){}
+        }
+        if (Array.isArray(m) && m[0] === 2 && m[2] === "RemoteStopTransaction"){
+          const uid = m[1];
+          try { s.send(JSON.stringify([3, uid, { status: "Accepted" }])); } catch(e){}
+          try { window.stopTransactionFlow("Remote"); } catch(e){}
+        }
+      });
+    } catch(e){}
+  }
+
   function bootSequence() {
     ocpp
       .sendCall("BootNotification", {
@@ -289,10 +318,12 @@
       });
   }
 
-  function startTransactionFlow() {
-    const connectorId = Number($("connectorId").value || 1);
-    const idTag = $("idTag").value.trim() || "DEMO-TAG";
-    const meterStart = Number($("meterStart").value || 0);
+  function startTransactionFlow(opts) {
+    const connectorId = Number((opts && opts.connectorId) || $("connectorId").value || 1);
+    const idTag = String((opts && opts.idTag) || $("idTag").value.trim() || "DEMO-TAG");
+    const initialWh = Math.ceil(telemetry?.energyWh || 0);
+    const meterStartInput = Number($("meterStart").value || 0);
+    const meterStart = Math.max(1, meterStartInput || initialWh);
     const targetSoc = Number($("targetSoc").value || 80);
     const fastMode = $("fastMode").checked;
     const userIntervalSec = Number($("meterIntervalSec")?.value || 0);
@@ -314,6 +345,9 @@
     $("startTime").textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     goalModalShown = false;
 
+    uiFlags.starting = true;
+    setStartLabel("Iniciando…");
+    setStatusBadge(state.state);
     authorizeFlow(idTag)
       .then((ok) => {
         if (!ok) throw new Error("Authorize rejeitado");
@@ -325,9 +359,12 @@
         });
       })
       .then((res) => {
-        transactionId = res.transactionId;
+        transactionId = res.transactionId || res.transaction_id || transactionId;
         state.startTransaction();
         sendStatus("Charging");
+        uiFlags.starting = false;
+        setStartLabel("Iniciar Carregamento");
+        setStatusBadge(state.state);
         // MeterValues com contexto de início da transação
         sendBeginMeterValues({
           connectorId,
@@ -338,15 +375,32 @@
         startUiLoop();
         startMeterValues();
       })
-      .catch((err) => logLine(`Início de sessão falhou: ${err.message}`, "err"));
+      .catch((err) => { uiFlags.starting = false; setStartLabel("Iniciar Carregamento"); setStatusBadge(state.state); logLine(`Início de sessão falhou: ${err.message}`, "err"); });
   }
 
-  function stopTransactionFlow() {
+  function resetUiIndicators() {
+    $("powerKW").textContent = format2(0);
+    $("voltageV").textContent = "0";
+    $("currentA").textContent = format2(0);
+    $("energyKWh").textContent = format3(0);
+    $("durationMin").textContent = 0;
+    $("temperatureC").textContent = format2(0);
+    $("priceUnit").textContent = format2(telemetry.pricePerKWh);
+    $("totalCost").textContent = format2(0);
+    updateGauge(0);
+    if ($("socBadgeValue")) { $("socBadgeValue").textContent = "0%"; }
+    $("startTime").textContent = "--:--";
+  }
+
+  function stopTransactionFlow(reason = "Local") {
     const connectorId = Number($("connectorId").value || 1);
     const idTag = $("idTag").value.trim() || "DEMO-TAG";
     const meterStop = Number($("meterStop").value || Math.ceil(telemetry.energyWh));
     const realProfile = !!$("realProfile")?.checked;
 
+    uiFlags.stopping = true;
+    setStopLabel("Parando…");
+    setStatusBadge(state.state);
     stopMeterValues();
 
     // MeterValues com contexto de fim da transação
@@ -357,22 +411,30 @@
       realProfile,
     });
 
+    sendStatus("Finishing", connectorId);
+
     ocpp
       .sendCall("StopTransaction", {
         transactionId,
         timestamp: new Date().toISOString(),
         meterStop,
         idTag,
+        reason,
       })
       .then(() => {
         state.stopTransaction();
         saveSessionHistory();
         stopUiLoop();
+        resetUiIndicators();
         sendStatus("Available", connectorId);
         state.finishToAvailable(2000);
         transactionId = null;
+        uiFlags.stopping = false;
+        setStopLabel("Parar Carregamento");
+        setStartLabel("Iniciar Carregamento");
+        setStatusBadge(state.state);
       })
-      .catch((err) => logLine(`StopTransaction erro: ${err.message}`, "err"));
+      .catch((err) => { uiFlags.stopping = false; setStopLabel("Parar Carregamento"); setStatusBadge(state.state); logLine(`StopTransaction erro: ${err.message}`, "err"); });
   }
 
   function startMeterValues() {
@@ -511,13 +573,12 @@
     switch (action) {
       case "RemoteStartTransaction": {
         ocpp.sendResult(id, { status: "Accepted" });
-        // Inicia sessão local
-        startTransactionFlow();
+        startTransactionFlow({ idTag: String((payload && payload.idTag) || $("idTag").value || "IGEA-USER-001"), connectorId: Number((payload && payload.connectorId) || $("connectorId").value || 1) });
         break;
       }
       case "RemoteStopTransaction": {
         ocpp.sendResult(id, { status: "Accepted" });
-        stopTransactionFlow();
+        stopTransactionFlow("Remote");
         break;
       }
       case "Reset": {
@@ -547,9 +608,9 @@
   // Bind UI
   function init() {
     // Pre-popular campos com valores úteis
-    $("endpointUrl").value = "ws://localhost:3000";
-    $("subprotocols").value = "ocpp1.6,ocpp1.6j";
-    $("chargePointId").value = "LOCAL-CP-01";
+    $("endpointUrl").value = "ws://35.231.137.231:3000/ocpp/CentralSystemService/DRBAKANA-TEST-03";
+    $("subprotocols").value = "ocpp1.6j,ocpp1.6";
+    $("chargePointId").value = "DRBAKANA-TEST-03";
     $("connectorId").value = 1;
     $("idTag").value = "IGEA-USER-001";
     $("meterStart").value = 0;
@@ -591,7 +652,7 @@
         ocpp = new OCPPClient({
           url,
           subprotocols: s,
-          onOpen: () => { opened = true; setWsStatus("Conectado"); bootSequence(); },
+          onOpen: () => { opened = true; setWsStatus("Conectado"); bootSequence(); installRemoteHook(); },
           onClose: () => {
             if (!opened && idx < attempts.length - 1) {
               idx += 1;
@@ -622,7 +683,7 @@
 
     $("btnStop").onclick = () => {
       if (!transactionId) return;
-      stopTransactionFlow();
+      stopTransactionFlow("Local");
     };
 
     $("btnClearLog").onclick = () => {
@@ -644,8 +705,48 @@
   document.addEventListener("DOMContentLoaded", init);
   // Auto-conectar ao carregar para realizar verificações no CP solicitado
   document.addEventListener("DOMContentLoaded", () => {
+    const cpIdInput = $("chargePointId");
+    if (cpIdInput && !cpIdInput.value) cpIdInput.value = "DRBAKANA-TEST-03";
+    const spInput = $("subprotocols");
+    if (spInput && !spInput.value) spInput.value = "ocpp1.6j,ocpp1.6";
+    const connInput = $("connectorId");
+    if (connInput && !connInput.value) connInput.value = "1";
+    const idTagInput = $("idTag");
+    if (idTagInput && !idTagInput.value) idTagInput.value = "IGEA-USER-001";
+    const urlInput = $("endpointUrl");
+    if (urlInput && !urlInput.value) urlInput.value = `ws://35.231.137.231:3000/ocpp/CentralSystemService/${cpIdInput?.value || "DRBAKANA-TEST-03"}`;
+    window.DEFAULT_IDTAG = $("idTag").value || "IGEA-USER-001";
+    window.DEFAULT_CONNECTOR_ID = Number($("connectorId").value || 1);
     setTimeout(() => { if ($("btnConnect")) $("btnConnect").click(); }, 300);
+    setTimeout(() => { if ($("btnStart")) $("btnStart").click(); }, 2000);
   });
+  window.startTransactionFlow = startTransactionFlow;
+  window.stopTransactionFlow = stopTransactionFlow;
+  window.getOcppWs = function () { return ocpp && ocpp.ws ? ocpp.ws : null; };
+  (function(){
+    try {
+      const s = window.getOcppWs && window.getOcppWs();
+      if (!s) return;
+      window._remoteHookEnabled = true;
+      s.addEventListener("message", function(ev){
+        let m;
+        try { m = JSON.parse(ev.data); } catch(e){ return; }
+        if (Array.isArray(m) && m[0] === 2 && m[2] === "RemoteStartTransaction"){
+          const uid = m[1];
+          const p = m[3] || {};
+          const idTag = String(p.idTag || window.DEFAULT_IDTAG || "IGEA-USER-001");
+          const connectorId = Number(p.connectorId || window.DEFAULT_CONNECTOR_ID || 1);
+          try { s.send(JSON.stringify([3, uid, { status: "Accepted" }])); } catch(e){}
+          try { window.startTransactionFlow({ idTag, connectorId }); } catch(e){}
+        }
+        if (Array.isArray(m) && m[0] === 2 && m[2] === "RemoteStopTransaction"){
+          const uid = m[1];
+          try { s.send(JSON.stringify([3, uid, { status: "Accepted" }])); } catch(e){}
+          try { window.stopTransactionFlow("Remote"); } catch(e){}
+        }
+      });
+    } catch(e){}
+  })();
 })();
   // Modal de conclusão de meta
   let goalModalShown = false;
@@ -662,3 +763,7 @@
       $("goalModalBackdrop").classList.add("hidden");
     }
   }
+  const uiFlags = { starting: false, stopping: false };
+  function isWsOpen() { return !!(ocpp && ocpp.ws && ocpp.ws.readyState === WebSocket.OPEN); }
+  function setStartLabel(text) { const b = $("btnStart"); if (b) b.textContent = text; }
+  function setStopLabel(text) { const b = $("btnStop"); if (b) b.textContent = text; }
