@@ -100,17 +100,17 @@ class Telemetry {
     this.currentA = Math.min(this.maxCurrentA, (targetPowerKW * 1000) / this.voltageV);
     this.powerKW = (this.voltageV * this.currentA) / 1000;
 
-    // Energia (Wh)
+    // Energia física base (Wh) se fosse tempo real
     const powerW = this.powerKW * 1000;
-    const dWh = (powerW * dt) / 3600;
-    this.energyWh += dWh;
+    const dWh_physical = (powerW * dt) / 3600;
 
     // Temperatura
     this.temperatureC += this.tempRate * dt + noise(0.02);
 
     // SoC: incremento proporcional à energia relativa à capacidade + garantia por tempo-alvo
-    const dKWh = dWh / 1000;
-    const dSocEnergy = (dKWh / this.batteryCapacityKWh) * 100;
+    const dKWh_physical = dWh_physical / 1000;
+    const dSocEnergy = (dKWh_physical / this.batteryCapacityKWh) * 100;
+    
     let dSocTime = 0;
     if (this.timeTargetMin && this.startSoc != null) {
       const remainingSoc = Math.max(0, this.targetSoc - this.soc);
@@ -118,8 +118,18 @@ class Telemetry {
       const plannedRatePerSec = (this.targetSoc - this.startSoc) / (this.timeTargetMin * 60);
       dSocTime = Math.min(remainingSoc, plannedRatePerSec * dt);
     }
-    const dSoc = Math.max(dSocEnergy, dSocTime);
-    this.soc = Math.min(this.targetSoc, Math.min(100, this.soc + dSoc));
+    
+    // Determina o passo real de SoC (máximo entre físico e acelerado)
+    const dSoc_actual = Math.max(dSocEnergy, dSocTime);
+    this.soc = Math.min(this.targetSoc, Math.min(100, this.soc + dSoc_actual));
+
+    // Ajusta Energia para refletir o ganho de SoC (para simulação realista acelerada)
+    // Se dSoc_actual > dSocEnergy, significa que aceleramos o tempo. 
+    // A energia deve acompanhar o SoC ganho na bateria.
+    const dKWh_actual = (dSoc_actual / 100) * this.batteryCapacityKWh;
+    const dWh_actual = dKWh_actual * 1000;
+    
+    this.energyWh += dWh_actual;
 
     // Suspensão se potência ~0 por alguns segundos (simulação simplificada)
     // Tratamento de suspensão é feito pela máquina de estados externamente.

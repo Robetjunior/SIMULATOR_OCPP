@@ -30,8 +30,13 @@
     // controle botões
     const startBtn = $("btnStart");
     const stopBtn = $("btnStop");
-    if (stopBtn) stopBtn.disabled = state !== ChargeState.Charging || Boolean(uiFlags.stopping);
+    if (stopBtn) stopBtn.disabled = !((state === ChargeState.Preparing) || (state === ChargeState.Charging)) || Boolean(uiFlags.stopping);
     if (startBtn) startBtn.disabled = !(state === ChargeState.Available || state === ChargeState.Preparing) || !isWsOpen() || Boolean(uiFlags.starting);
+    const socBadge = $("socBadge");
+    if (socBadge && socBadge.childNodes && socBadge.childNodes.length > 0) {
+      const prefix = (state === ChargeState.Preparing || state === ChargeState.Charging) ? "Carregando:" : "Carregado:";
+      try { socBadge.childNodes[0].nodeValue = prefix + " "; } catch(e){}
+    }
   }
 
   function updateGauge(percent) {
@@ -92,7 +97,9 @@
     sendCall(action, payload) {
       const id = this.nextId();
       const frame = [2, id, action, payload];
-      this.ws.send(JSON.stringify(frame));
+      const raw = JSON.stringify(frame);
+      try { console.log('[OCPP] CALL.out', { action, payload, rawFrame: frame }); } catch(e){}
+      this.ws.send(raw);
       logLine(`=> ${action} ${JSON.stringify(payload)}`, "out");
       return new Promise((resolve, reject) => {
         this.pending.set(id, { resolve, reject, action });
@@ -170,11 +177,28 @@
 
   let ocpp = null;
   let transactionId = null;
+  let sessionMeterStart = 0;
   let meterValuesTimer = null;
   let uiTimer = null;
   let lastZeroPowerSec = 0;
+  let telemetryDefaultMaxPowerKW = telemetry.maxPowerKW;
+  let telemetryDefaultMaxCurrentA = telemetry.maxCurrentA;
   const setWsStatus = (text) => { const el = $("wsStatus"); if (el) el.textContent = text || ""; };
+  const setFlowHint = (text) => { const el = $("flowHint"); if (el) el.textContent = text || ""; };
   let meterIntervalMs = 5000;
+
+  let goalModalShown = false;
+  function showGoalModal(percent) {
+    if ($("goalModalMessage")) { $("goalModalMessage").textContent = `Bateria atingiu ${percent}% da meta definida.`; }
+    if ($("goalModalBackdrop")) { $("goalModalBackdrop").classList.remove("hidden"); }
+  }
+  function hideGoalModal() {
+    if ($("goalModalBackdrop")) { $("goalModalBackdrop").classList.add("hidden"); }
+  }
+  const uiFlags = { starting: false, stopping: false };
+  function isWsOpen() { return !!(ocpp && ocpp.ws && ocpp.ws.readyState === WebSocket.OPEN); }
+  function setStartLabel(text) { const b = $("btnStart"); if (b) b.textContent = text; }
+  function setStopLabel(text) { const b = $("btnStop"); if (b) b.textContent = text; }
 
   function buildUrl() {
     const url = $("endpointUrl").value.trim();
@@ -266,8 +290,9 @@
     try {
       const s = window.getOcppWs && window.getOcppWs();
       if (!s) return;
-      if (window._remoteHookEnabled) return;
-      window._remoteHookEnabled = true;
+      if (s._remoteHookAttached) return;
+      s._remoteHookAttached = true;
+      logLine("Hook remoto instalado", "info");
       s.addEventListener("message", function(ev){
         let m;
         try { m = JSON.parse(ev.data); } catch(e){ return; }
@@ -276,12 +301,17 @@
           const p = m[3] || {};
           const idTag = String(p.idTag || window.DEFAULT_IDTAG || "IGEA-USER-001");
           const connectorId = Number(p.connectorId || window.DEFAULT_CONNECTOR_ID || 1);
+          try { console.log('[OCPP] RemoteStart.received', p); } catch(e){}
+          logLine("<= CALL RemoteStartTransaction", "info");
           try { s.send(JSON.stringify([3, uid, { status: "Accepted" }])); } catch(e){}
-          try { window.startTransactionFlow({ idTag, connectorId }); } catch(e){}
+          logLine("=> CALLRESULT RemoteStartTransaction: Accepted", "info");
+          handleRemoteStart({ idTag, connectorId });
         }
         if (Array.isArray(m) && m[0] === 2 && m[2] === "RemoteStopTransaction"){
           const uid = m[1];
           try { s.send(JSON.stringify([3, uid, { status: "Accepted" }])); } catch(e){}
+          logLine("<= CALL RemoteStopTransaction", "info");
+          setFlowHint("Comando remoto recebido — parando sessão…");
           try { window.stopTransactionFlow("Remote"); } catch(e){}
         }
       });
@@ -296,6 +326,8 @@
         firmwareVersion: "1.0.0",
       })
       .then((res) => {
+        logLine(`[OCPP] BootNotification.conf status=${res && res.status ? res.status : ""} interval=${res && res.interval ? res.interval : ""}`, "info");
+        setFlowHint(`BootNotification.${res && res.status ? res.status : ""} — heartbeat ${(Number(res && res.interval) || 60)}s`);
         if (res && res.status === "Accepted") {
           const interval = Number(res.interval) || 60;
           ocpp.startHeartbeat(interval);
@@ -306,14 +338,20 @@
   }
 
   function authorizeFlow(idTag) {
+    logLine(`[OCPP] Authorize.sent idTag=${idTag}`, "info");
+    setFlowHint("Authorize enviado…");
     return ocpp
       .sendCall("Authorize", { idTag })
       .then((res) => {
         if (res && res.idTagInfo && res.idTagInfo.status === "Accepted") {
           state.authorizeAccepted();
           sendStatus("Preparing");
+          logLine(`[OCPP] Authorize.conf status=Accepted`, "info");
+          setFlowHint("Authorize aceito — iniciando StartTransaction…");
           return true;
         }
+        logLine(`[OCPP] Authorize.conf status=${res && res.idTagInfo ? res.idTagInfo.status : "Unknown"}` , "err");
+        setFlowHint("Authorize rejeitado — prosseguindo com StartTransaction para teste…");
         return false;
       });
   }
@@ -324,6 +362,7 @@
     const initialWh = Math.ceil(telemetry?.energyWh || 0);
     const meterStartInput = Number($("meterStart").value || 0);
     const meterStart = Math.max(1, meterStartInput || initialWh);
+    sessionMeterStart = meterStart;
     const targetSoc = Number($("targetSoc").value || 80);
     const fastMode = $("fastMode").checked;
     const userIntervalSec = Number($("meterIntervalSec")?.value || 0);
@@ -332,7 +371,7 @@
     telemetry.setPricePerKWh(Number($("pricePerKWh").value || telemetry.pricePerKWh));
     telemetry.applyConfig({ targetSoc, timeTargetMin: 5 });
     if (fastMode) {
-      telemetry.applyConfig({ maxPowerKW: 22, rampUpSeconds: 5, taperStartSoc: 90, batteryCapacityKWh: 2 });
+      telemetry.applyConfig({ maxPowerKW: 22, rampUpSeconds: 5, taperStartSoc: 90, batteryCapacityKWh: 50 });
       meterIntervalMs = 3000;
     } else {
       telemetry.applyConfig({ maxPowerKW: 7, rampUpSeconds: 20, taperStartSoc: 70, batteryCapacityKWh: 80 });
@@ -342,15 +381,22 @@
       meterIntervalMs = userIntervalSec * 1000;
     }
     telemetry.start(Date.now());
+    telemetryDefaultMaxPowerKW = telemetry.maxPowerKW;
+    telemetryDefaultMaxCurrentA = telemetry.maxCurrentA;
     $("startTime").textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     goalModalShown = false;
+    updateUI(telemetry.snapshot());
+    startUiLoop();
 
     uiFlags.starting = true;
     setStartLabel("Iniciando…");
+    state.setState(ChargeState.Preparing);
     setStatusBadge(state.state);
+    setFlowHint("Iniciando sessão — Authorize ➜ StartTransaction ➜ Charging…");
     authorizeFlow(idTag)
       .then((ok) => {
-        if (!ok) throw new Error("Authorize rejeitado");
+        logLine(`[OCPP] StartTransaction.sent connectorId=${connectorId} meterStart=${meterStart} idTag=${idTag}`, "info");
+        setFlowHint("StartTransaction enviado…");
         return ocpp.sendCall("StartTransaction", {
           connectorId,
           idTag,
@@ -359,9 +405,32 @@
         });
       })
       .then((res) => {
-        transactionId = res.transactionId || res.transaction_id || transactionId;
+        transactionId = res && (res.transactionId || res.transaction_id) ? (res.transactionId || res.transaction_id) : transactionId;
+        if (!transactionId) {
+          return new Promise((resolve) => setTimeout(resolve, 800)).then(() =>
+            ocpp
+              .sendCall("StartTransaction", {
+                connectorId,
+                idTag,
+                timestamp: new Date().toISOString(),
+                meterStart,
+              })
+              .then((r2) => {
+                transactionId = r2 && (r2.transactionId || r2.transaction_id) ? (r2.transactionId || r2.transaction_id) : transactionId;
+                return r2;
+              })
+          );
+        }
+        return res;
+      })
+      .then((res) => {
+        transactionId = res && (res.transactionId || res.transaction_id) ? (res.transactionId || res.transaction_id) : transactionId;
+        try { window.__lastTxId = transactionId; } catch(e){}
+        logLine(`[OCPP] StartTransaction.conf transactionId=${transactionId || ""}`, transactionId ? "info" : "err");
         state.startTransaction();
         sendStatus("Charging");
+        logLine(`[OCPP] StatusNotification.Charging`, "info");
+        setFlowHint(`Charging ativo — transactionId=${transactionId || "?"}`);
         uiFlags.starting = false;
         setStartLabel("Iniciar Carregamento");
         setStatusBadge(state.state);
@@ -376,6 +445,90 @@
         startMeterValues();
       })
       .catch((err) => { uiFlags.starting = false; setStartLabel("Iniciar Carregamento"); setStatusBadge(state.state); logLine(`Início de sessão falhou: ${err.message}`, "err"); });
+  }
+
+  async function startChargingSession(opts) {
+    const connectorId = Number((opts && opts.connectorId) || $("connectorId").value || 1);
+    const idTag = String((opts && opts.idTag) || $("idTag").value.trim() || "DEMO-TAG");
+    const initialWh = Math.ceil(telemetry?.energyWh || 0);
+    const meterStartInput = Number($("meterStart").value || 0);
+    const meterStart = Math.max(1, meterStartInput || initialWh);
+    const targetSoc = Number($("targetSoc").value || 80);
+    const fastMode = $("fastMode").checked;
+    const userIntervalSec = Number($("meterIntervalSec")?.value || 0);
+    const realProfile = !!$("realProfile")?.checked;
+    telemetry.reset();
+    telemetry.setPricePerKWh(Number($("pricePerKWh").value || telemetry.pricePerKWh));
+    telemetry.applyConfig({ targetSoc, timeTargetMin: 5 });
+    if (fastMode) {
+      telemetry.applyConfig({ maxPowerKW: 22, rampUpSeconds: 5, taperStartSoc: 90, batteryCapacityKWh: 50 });
+      meterIntervalMs = 3000;
+    } else {
+      telemetry.applyConfig({ maxPowerKW: 7, rampUpSeconds: 20, taperStartSoc: 70, batteryCapacityKWh: 80 });
+      meterIntervalMs = 5000;
+    }
+    if (userIntervalSec && userIntervalSec > 0) {
+      meterIntervalMs = userIntervalSec * 1000;
+    }
+    telemetry.start(Date.now());
+    telemetryDefaultMaxPowerKW = telemetry.maxPowerKW;
+    telemetryDefaultMaxCurrentA = telemetry.maxCurrentA;
+    $("startTime").textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    goalModalShown = false;
+    updateUI(telemetry.snapshot());
+    startUiLoop();
+
+    uiFlags.starting = true;
+    setStartLabel("Iniciando…");
+    state.setState(ChargeState.Preparing);
+    setStatusBadge(state.state);
+    setFlowHint("Iniciando sessão — Authorize ➜ StartTransaction ➜ Charging…");
+    try {
+      await authorizeFlow(idTag);
+      let got = false;
+      for (let tries = 1; tries <= 3; tries++) {
+        logLine(`[OCPP] Start.watchdog.attempt=${tries}/3`, "info");
+        logLine(`[OCPP] StartTransaction.sent connectorId=${connectorId} meterStart=${meterStart} idTag=${idTag}`, "info");
+        const res = await ocpp
+          .sendCall("StartTransaction", {
+            connectorId,
+            idTag,
+            timestamp: new Date().toISOString(),
+            meterStart,
+          })
+          .catch((err) => { logLine(`StartTransaction erro: ${err.message}`, "err"); return null; });
+        transactionId = res && (res.transactionId || res.transaction_id) ? (res.transactionId || res.transaction_id) : transactionId;
+        if (transactionId) { got = true; break; }
+        if (tries < 3) {
+          logLine(`[OCPP] Start.watchdog.retry_next=${tries + 1}/3`, "err");
+          await new Promise((r) => setTimeout(r, tries === 1 ? 1500 : 3000));
+        }
+      }
+      if (!got) {
+        logLine(`[OCPP] Start.watchdog.giveup`, "err");
+        uiFlags.starting = false;
+        setStartLabel("Iniciar Carregamento");
+        setStatusBadge(state.state);
+        return;
+      }
+      try { window.__lastTxId = transactionId; } catch(e){}
+      logLine(`[OCPP] StartTransaction.conf transactionId=${transactionId || ""}`, transactionId ? "info" : "err");
+      state.startTransaction();
+      sendStatus("Charging");
+      logLine(`[OCPP] StatusNotification.Charging`, "info");
+      setFlowHint(`Charging ativo — transactionId=${transactionId || "?"}`);
+      uiFlags.starting = false;
+      setStartLabel("Iniciar Carregamento");
+      setStatusBadge(state.state);
+      sendBeginMeterValues({ connectorId, transactionId, meterStart, realProfile });
+      startUiLoop();
+      startMeterValues();
+    } catch (err) {
+      uiFlags.starting = false;
+      setStartLabel("Iniciar Carregamento");
+      setStatusBadge(state.state);
+      logLine(`Início de sessão falhou: ${err.message}`, "err");
+    }
   }
 
   function resetUiIndicators() {
@@ -395,13 +548,14 @@
   function stopTransactionFlow(reason = "Local") {
     const connectorId = Number($("connectorId").value || 1);
     const idTag = $("idTag").value.trim() || "DEMO-TAG";
-    const meterStop = Number($("meterStop").value || Math.ceil(telemetry.energyWh));
+    const meterStop = Number($("meterStop").value || Math.ceil(sessionMeterStart + telemetry.energyWh));
     const realProfile = !!$("realProfile")?.checked;
 
     uiFlags.stopping = true;
     setStopLabel("Parando…");
     setStatusBadge(state.state);
     stopMeterValues();
+    setFlowHint("Parando sessão…");
 
     // MeterValues com contexto de fim da transação
     sendEndMeterValues({
@@ -412,6 +566,7 @@
     });
 
     sendStatus("Finishing", connectorId);
+    logLine(`[OCPP] StatusNotification.Finishing`, "info");
 
     ocpp
       .sendCall("StopTransaction", {
@@ -422,16 +577,17 @@
         reason,
       })
       .then(() => {
-        state.stopTransaction();
         saveSessionHistory();
         stopUiLoop();
         resetUiIndicators();
         sendStatus("Available", connectorId);
-        state.finishToAvailable(2000);
+        logLine(`[OCPP] StatusNotification.Available`, "info");
+        setFlowHint(`BootNotification.Accepted — heartbeat ${Number(ocpp && ocpp.heartbeatIntervalSec) || 60}s`);
         transactionId = null;
         uiFlags.stopping = false;
         setStopLabel("Parar Carregamento");
         setStartLabel("Iniciar Carregamento");
+        try { state.setState(ChargeState.Available); } catch(e){}
         setStatusBadge(state.state);
       })
       .catch((err) => { uiFlags.stopping = false; setStopLabel("Parar Carregamento"); setStatusBadge(state.state); logLine(`StopTransaction erro: ${err.message}`, "err"); });
@@ -451,7 +607,7 @@
             timestamp: new Date().toISOString(),
             sampledValue: (() => {
               const arr = [];
-              arr.push({ value: (m.energyWh / 1000).toFixed(3), context: "Sample.Periodic", format: "Raw", measurand: "Energy.Active.Import.Register", unit: "kWh", location: "Outlet" });
+              arr.push({ value: Math.round(sessionMeterStart + m.energyWh).toString(), context: "Sample.Periodic", format: "Raw", measurand: "Energy.Active.Import.Register", unit: "Wh", location: "Outlet" });
               arr.push({ value: m.powerKW.toFixed(3), context: "Sample.Periodic", format: "Raw", measurand: "Power.Active.Import", unit: "kW", location: "Outlet" });
               arr.push({ value: Math.round(m.voltageV).toString(), context: "Sample.Periodic", format: "Raw", measurand: "Voltage", unit: "V", phase: "L1-N", location: "Outlet" });
               arr.push({ value: m.currentA.toFixed(2), context: "Sample.Periodic", format: "Raw", measurand: "Current.Import", unit: "A", phase: "L1", location: "Outlet" });
@@ -463,6 +619,7 @@
           },
         ],
       };
+      logLine(`[OCPP] MeterValues.sent periodic`, "info");
       ocpp.sendCall("MeterValues", payload).catch(() => {});
     }, meterIntervalMs);
   }
@@ -474,11 +631,40 @@
     }
   }
 
+  function triggerStartWithWatchdog({ idTag, connectorId }) {
+    let tries = 0;
+    const run = () => {
+      tries += 1;
+      logLine(`[OCPP] Start.watchdog.attempt=${tries}/3`, "info");
+      try { startTransactionFlow({ idTag, connectorId }); } catch(e){}
+      if (tries < 3) {
+        const delay = tries === 1 ? 1500 : 3000;
+        setTimeout(() => {
+          if (!transactionId) {
+            logLine(`[OCPP] Start.watchdog.retry_next=${tries + 1}/3`, "err");
+            run();
+          }
+        }, delay);
+      }
+    };
+    try { sendStatus("Preparing", connectorId); } catch(e){}
+    run();
+  }
+
+  function handleRemoteStart({ idTag, connectorId }) {
+    logLine(`[OCPP] RemoteStart.received idTag=${idTag} connectorId=${connectorId}`, "info");
+    logLine(`RemoteStart recebido idTag=${idTag} connectorId=${connectorId}`, "info");
+    try { console.log('[OCPP] RemoteStart.received', { idTag, connectorId }); } catch(e){}
+    try { state.setState(ChargeState.Preparing); setStatusBadge(state.state); } catch(e){}
+    try { sendStatus("Preparing", connectorId); } catch(e){}
+    try { startChargingSession({ idTag, connectorId }); } catch(e){}
+  }
+
   function sendBeginMeterValues({ connectorId, transactionId, meterStart, realProfile }) {
     if (!ocpp || !ocpp.ws || ocpp.ws.readyState !== WebSocket.OPEN) return;
     const m = telemetry.snapshot();
     const sampled = [];
-    sampled.push({ value: (meterStart / 1000).toFixed(3), context: "Transaction.Begin", format: "Raw", measurand: "Energy.Active.Import.Register", unit: "kWh", location: "Outlet" });
+    sampled.push({ value: Math.round(meterStart).toString(), context: "Transaction.Begin", format: "Raw", measurand: "Energy.Active.Import.Register", unit: "Wh", location: "Outlet" });
     sampled.push({ value: m.powerKW.toFixed(3), context: "Transaction.Begin", format: "Raw", measurand: "Power.Active.Import", unit: "kW", location: "Outlet" });
     sampled.push({ value: Math.round(m.voltageV).toString(), context: "Transaction.Begin", format: "Raw", measurand: "Voltage", unit: "V", phase: "L1-N", location: "Outlet" });
     sampled.push({ value: m.currentA.toFixed(2), context: "Transaction.Begin", format: "Raw", measurand: "Current.Import", unit: "A", phase: "L1", location: "Outlet" });
@@ -494,6 +680,7 @@
         },
       ],
     };
+    logLine(`[OCPP] MeterValues.sent begin`, "info");
     ocpp.sendCall("MeterValues", payload).catch(() => {});
   }
 
@@ -501,7 +688,7 @@
     if (!ocpp || !ocpp.ws || ocpp.ws.readyState !== WebSocket.OPEN) return;
     const m = telemetry.snapshot();
     const sampled = [];
-    sampled.push({ value: (meterStop / 1000).toFixed(3), context: "Transaction.End", format: "Raw", measurand: "Energy.Active.Import.Register", unit: "kWh", location: "Outlet" });
+    sampled.push({ value: Math.round(meterStop).toString(), context: "Transaction.End", format: "Raw", measurand: "Energy.Active.Import.Register", unit: "Wh", location: "Outlet" });
     sampled.push({ value: m.powerKW.toFixed(3), context: "Transaction.End", format: "Raw", measurand: "Power.Active.Import", unit: "kW", location: "Outlet" });
     sampled.push({ value: Math.round(m.voltageV).toString(), context: "Transaction.End", format: "Raw", measurand: "Voltage", unit: "V", phase: "L1-N", location: "Outlet" });
     sampled.push({ value: m.currentA.toFixed(2), context: "Transaction.End", format: "Raw", measurand: "Current.Import", unit: "A", phase: "L1", location: "Outlet" });
@@ -573,7 +760,7 @@
     switch (action) {
       case "RemoteStartTransaction": {
         ocpp.sendResult(id, { status: "Accepted" });
-        startTransactionFlow({ idTag: String((payload && payload.idTag) || $("idTag").value || "IGEA-USER-001"), connectorId: Number((payload && payload.connectorId) || $("connectorId").value || 1) });
+        startChargingSession({ idTag: String((payload && payload.idTag) || $("idTag").value || "IGEA-USER-001"), connectorId: Number((payload && payload.connectorId) || $("connectorId").value || 1) });
         break;
       }
       case "RemoteStopTransaction": {
@@ -599,6 +786,30 @@
         ocpp.sendResult(id, { status: "Accepted" });
         break;
       }
+      case "SetChargingProfile": {
+        try {
+          const cp = payload && payload.chargingProfile;
+          const sch = cp && cp.chargingSchedule;
+          const unit = sch && sch.chargingRateUnit;
+          const periods = sch && sch.chargingSchedulePeriod;
+          const first = Array.isArray(periods) && periods[0];
+          if (unit === "W" && first && first.limit != null) {
+            const limitKW = Number(first.limit) / 1000;
+            telemetry.applyConfig({ maxPowerKW: Math.max(0.5, limitKW) });
+          } else if (unit === "A" && first && first.limit != null) {
+            const limitA = Number(first.limit);
+            const limitKW = (limitA * telemetry.nominalVoltage) / 1000;
+            telemetry.applyConfig({ maxCurrentA: Math.max(1, limitA), maxPowerKW: Math.max(0.5, limitKW) });
+          }
+        } catch(e){}
+        ocpp.sendResult(id, { status: "Accepted" });
+        break;
+      }
+      case "ClearChargingProfile": {
+        telemetry.applyConfig({ maxPowerKW: telemetryDefaultMaxPowerKW, maxCurrentA: telemetryDefaultMaxCurrentA });
+        ocpp.sendResult(id, { status: "Accepted" });
+        break;
+      }
       default: {
         ocpp.sendError(id, "NotSupported", `Ação ${action} não suportada`, {});
       }
@@ -608,8 +819,8 @@
   // Bind UI
   function init() {
     // Pre-popular campos com valores úteis
-    $("endpointUrl").value = "ws://35.231.137.231:3000/ocpp/CentralSystemService/DRBAKANA-TEST-03";
-    $("subprotocols").value = "ocpp1.6j,ocpp1.6";
+    $("endpointUrl").value = "ws://127.0.0.1:3000/ocpp/CentralSystemService/DRBAKANA-TEST-03";
+    $("subprotocols").value = "ocpp1.6j";
     $("chargePointId").value = "DRBAKANA-TEST-03";
     $("connectorId").value = 1;
     $("idTag").value = "IGEA-USER-001";
@@ -652,7 +863,7 @@
         ocpp = new OCPPClient({
           url,
           subprotocols: s,
-          onOpen: () => { opened = true; setWsStatus("Conectado"); bootSequence(); installRemoteHook(); },
+          onOpen: () => { opened = true; setWsStatus("Conectado"); setFlowHint("Conectado — enviando BootNotification…"); logLine(`[OCPP] BootNotification.sent`, "info"); bootSequence(); installRemoteHook(); },
           onClose: () => {
             if (!opened && idx < attempts.length - 1) {
               idx += 1;
@@ -678,7 +889,7 @@
         logLine("Conecte ao CSMS antes de iniciar.", "err");
         return;
       }
-      startTransactionFlow();
+      startChargingSession();
     };
 
     $("btnStop").onclick = () => {
@@ -718,11 +929,39 @@
     window.DEFAULT_IDTAG = $("idTag").value || "IGEA-USER-001";
     window.DEFAULT_CONNECTOR_ID = Number($("connectorId").value || 1);
     setTimeout(() => { if ($("btnConnect")) $("btnConnect").click(); }, 300);
-    setTimeout(() => { if ($("btnStart")) $("btnStart").click(); }, 2000);
+    // setTimeout(() => { if ($("btnStart")) $("btnStart").click(); }, 2000);
   });
+  startTransactionFlow = startChargingSession;
   window.startTransactionFlow = startTransactionFlow;
+  window.startChargingSession = startChargingSession;
   window.stopTransactionFlow = stopTransactionFlow;
+  window.handleRemoteStart = handleRemoteStart;
   window.getOcppWs = function () { return ocpp && ocpp.ws ? ocpp.ws : null; };
+  window.debugConnectCP = function () { const b = $("btnConnect"); if (b) b.click(); };
+  window.debugStartFlow = function (opts) { startChargingSession(opts || {}); };
+  window.debugStartTx = function (opts) { startChargingSession(opts || {}); };
+  window.debugStopTx = function () { stopTransactionFlow("Local"); };
+  window.debugStopFlow = function () { stopTransactionFlow("Local"); };
+  window.ocppConnection = {
+    connect: function () { const b = $("btnConnect"); if (b) b.click(); },
+    disconnect: function () { const b = $("btnDisconnect"); if (b) b.click(); },
+    ws: function () { return ocpp && ocpp.ws ? ocpp.ws : null; },
+  };
+  window.ocppMessages = {
+    BootNotification: function (p) { return ocpp && ocpp.sendCall("BootNotification", p || { chargePointVendor: "IGE2A", chargePointModel: "Sim1.6J", firmwareVersion: "1.0.0" }); },
+    Heartbeat: function () { return ocpp && ocpp.sendCall("Heartbeat", { chargePointModel: "Sim-1.0" }); },
+    Authorize: function (idTag) { return ocpp && ocpp.sendCall("Authorize", { idTag: String(idTag || $("idTag").value || "IGEA-USER-001") }); },
+    StartTransaction: function (payload) { return ocpp && ocpp.sendCall("StartTransaction", payload); },
+    StatusNotification: function (payload) { return ocpp && ocpp.sendCall("StatusNotification", payload); },
+    MeterValues: function (payload) { return ocpp && ocpp.sendCall("MeterValues", payload); },
+    StopTransaction: function (payload) { return ocpp && ocpp.sendCall("StopTransaction", payload); },
+  };
+  window.__ocppSendCall = function (action, payload) { if (!ocpp || !ocpp.ws || ocpp.ws.readyState !== WebSocket.OPEN) { try { console.log('[OCPP] CALL.skip', { action, reason: 'ws not open' }); } catch(e){} return Promise.reject(new Error('WS not open')); } return ocpp.sendCall(action, payload); };
+  window.telemetryAPI = {
+    snapshot: function(){ try { return telemetry && telemetry.snapshot ? telemetry.snapshot() : null; } catch(e){ return null; } },
+    state: function(){ try { return state && state.state ? state.state : null; } catch(e){ return null; } },
+    transactionId: function(){ try { return transactionId || null; } catch(e){ return null; } },
+  };
   (function(){
     try {
       const s = window.getOcppWs && window.getOcppWs();
@@ -737,7 +976,7 @@
           const idTag = String(p.idTag || window.DEFAULT_IDTAG || "IGEA-USER-001");
           const connectorId = Number(p.connectorId || window.DEFAULT_CONNECTOR_ID || 1);
           try { s.send(JSON.stringify([3, uid, { status: "Accepted" }])); } catch(e){}
-          try { window.startTransactionFlow({ idTag, connectorId }); } catch(e){}
+          try { window.startChargingSession({ idTag, connectorId }); } catch(e){}
         }
         if (Array.isArray(m) && m[0] === 2 && m[2] === "RemoteStopTransaction"){
           const uid = m[1];
@@ -748,22 +987,3 @@
     } catch(e){}
   })();
 })();
-  // Modal de conclusão de meta
-  let goalModalShown = false;
-  function showGoalModal(percent) {
-    if ($("goalModalMessage")) {
-      $("goalModalMessage").textContent = `Bateria atingiu ${percent}% da meta definida.`;
-    }
-    if ($("goalModalBackdrop")) {
-      $("goalModalBackdrop").classList.remove("hidden");
-    }
-  }
-  function hideGoalModal() {
-    if ($("goalModalBackdrop")) {
-      $("goalModalBackdrop").classList.add("hidden");
-    }
-  }
-  const uiFlags = { starting: false, stopping: false };
-  function isWsOpen() { return !!(ocpp && ocpp.ws && ocpp.ws.readyState === WebSocket.OPEN); }
-  function setStartLabel(text) { const b = $("btnStart"); if (b) b.textContent = text; }
-  function setStopLabel(text) { const b = $("btnStop"); if (b) b.textContent = text; }

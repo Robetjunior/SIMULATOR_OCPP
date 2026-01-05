@@ -12,12 +12,13 @@
         <h1 id="cpName">Charge Point</h1>
         <span id="statusBadge" class="badge status-available">Available</span>
         <span id="wsStatus" class="ws-status"></span>
+        <span id="flowHint" class="ws-status"></span>
         <span id="socBadge" class="badge">Carregado: <span id="socBadgeValue">0%</span></span>
       </div>
       <nav class="top-actions">
         <button id="btnConnect" class="btn">Conectar</button>
         <button id="btnDisconnect" class="btn btn-secondary">Desconectar</button>
-        <button id="btnStart" class="btn">Iniciar</button>
+        <button id="btnStart" class="btn btn-primary">Iniciar Carregamento</button>
         <button id="btnStop" class="btn btn-danger" disabled>Parar Carregamento</button>
       </nav>
     </header>
@@ -127,6 +128,7 @@
     <script src="assets/js/state.js"></script>
     <script src="assets/js/telemetry.js"></script>
     <script src="assets/js/simulator.js"></script>
+    <script src="assets/js/e2e.js"></script>
 
     <!-- Modal: Meta de carga atingida -->
     <div id="goalModalBackdrop" class="modal-backdrop hidden">
