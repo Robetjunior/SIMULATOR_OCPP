@@ -1,7 +1,26 @@
 {
   "name": "simulador-ocpp",
   "version": "1.0.0",
+  "description": "Simulador de Charge Point OCPP 1.6J para testes de integração e validação de CSMS.",
   "private": true,
+  "author": {
+    "name": "José Roberto",
+    "email": "seu-email@exemplo.com",
+    "url": "https://www.linkedin.com/in/jos%C3%A9-roberto-dev/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Robetjunior/SIMULATOR_OCPP.git"
+  },
+  "keywords": [
+    "ocpp",
+    "simulator",
+    "charge-point",
+    "ev",
+    "charging-station",
+    "websocket"
+  ],
+  "license": "MIT",
   "scripts": {
     "start": "node server.js"
   }
