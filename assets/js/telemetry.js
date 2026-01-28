@@ -28,7 +28,7 @@ class Telemetry {
     this.elapsedSec = 0;
     this.energyWh = 0; // acumulado
     this.powerKW = 0;
-    this.voltageV = this.nominalVoltage;
+    this.voltageV = this.nominalVoltage; // Mantém tensão nominal mesmo em repouso
     this.currentA = 0;
     this.temperatureC = this.tempBase;
     this.soc = 20; // estado inicial de carga

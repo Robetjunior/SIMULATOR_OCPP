@@ -287,35 +287,8 @@
   }
 
   function installRemoteHook() {
-    try {
-      const s = window.getOcppWs && window.getOcppWs();
-      if (!s) return;
-      if (s._remoteHookAttached) return;
-      s._remoteHookAttached = true;
-      logLine("Hook remoto instalado", "info");
-      s.addEventListener("message", function(ev){
-        let m;
-        try { m = JSON.parse(ev.data); } catch(e){ return; }
-        if (Array.isArray(m) && m[0] === 2 && m[2] === "RemoteStartTransaction"){
-          const uid = m[1];
-          const p = m[3] || {};
-          const idTag = String(p.idTag || window.DEFAULT_IDTAG || "IGEA-USER-001");
-          const connectorId = Number(p.connectorId || window.DEFAULT_CONNECTOR_ID || 1);
-          try { console.log('[OCPP] RemoteStart.received', p); } catch(e){}
-          logLine("<= CALL RemoteStartTransaction", "info");
-          try { s.send(JSON.stringify([3, uid, { status: "Accepted" }])); } catch(e){}
-          logLine("=> CALLRESULT RemoteStartTransaction: Accepted", "info");
-          handleRemoteStart({ idTag, connectorId });
-        }
-        if (Array.isArray(m) && m[0] === 2 && m[2] === "RemoteStopTransaction"){
-          const uid = m[1];
-          try { s.send(JSON.stringify([3, uid, { status: "Accepted" }])); } catch(e){}
-          logLine("<= CALL RemoteStopTransaction", "info");
-          setFlowHint("Comando remoto recebido — parando sessão…");
-          try { window.stopTransactionFlow("Remote"); } catch(e){}
-        }
-      });
-    } catch(e){}
+    // Hook removido para evitar duplicidade com handleInbound
+    // A lógica agora é centralizada no OCPPClient.handleMessage -> handleInbound
   }
 
   function bootSequence() {
@@ -371,8 +344,9 @@
     telemetry.setPricePerKWh(Number($("pricePerKWh").value || telemetry.pricePerKWh));
     telemetry.applyConfig({ targetSoc, timeTargetMin: 5 });
     if (fastMode) {
-      telemetry.applyConfig({ maxPowerKW: 22, rampUpSeconds: 5, taperStartSoc: 90, batteryCapacityKWh: 50 });
-      meterIntervalMs = 3000;
+      // timeTargetMin: 1.5 min = 90s
+      telemetry.applyConfig({ maxPowerKW: 50, rampUpSeconds: 2, taperStartSoc: 95, batteryCapacityKWh: 50, timeTargetMin: 1.5 });
+      meterIntervalMs = 2000;
     } else {
       telemetry.applyConfig({ maxPowerKW: 7, rampUpSeconds: 20, taperStartSoc: 70, batteryCapacityKWh: 80 });
       meterIntervalMs = 5000;
@@ -449,7 +423,21 @@
 
   async function startChargingSession(opts) {
     const connectorId = Number((opts && opts.connectorId) || $("connectorId").value || 1);
+    
+    // Verificação de Cabo Conectado
+    const cableConnected = $("cableConnected") && $("cableConnected").checked;
+    if (!cableConnected) {
+      logLine(`[OCPP] Falha ao iniciar: Cabo desconectado. Conecte o cabo ao EV.`, "err");
+      setFlowHint("Aguardando conexão do cabo...");
+      // Se for RemoteStart, o CSMS já recebeu Accepted mas não receberá StartTransaction, causando timeout.
+      // Isso reproduz exatamente o erro reportado quando o cabo não está conectado.
+      uiFlags.starting = false;
+      setStartLabel("Iniciar Carregamento");
+      return;
+    }
+
     const idTag = String((opts && opts.idTag) || $("idTag").value.trim() || "DEMO-TAG");
+    const skipAuthorize = !!(opts && opts.skipAuthorize);
     const initialWh = Math.ceil(telemetry?.energyWh || 0);
     const meterStartInput = Number($("meterStart").value || 0);
     const meterStart = Math.max(1, meterStartInput || initialWh);
@@ -461,8 +449,9 @@
     telemetry.setPricePerKWh(Number($("pricePerKWh").value || telemetry.pricePerKWh));
     telemetry.applyConfig({ targetSoc, timeTargetMin: 5 });
     if (fastMode) {
-      telemetry.applyConfig({ maxPowerKW: 22, rampUpSeconds: 5, taperStartSoc: 90, batteryCapacityKWh: 50 });
-      meterIntervalMs = 3000;
+      // timeTargetMin: 1.5 min = 90s
+      telemetry.applyConfig({ maxPowerKW: 50, rampUpSeconds: 2, taperStartSoc: 95, batteryCapacityKWh: 50, timeTargetMin: 1.5 });
+      meterIntervalMs = 2000;
     } else {
       telemetry.applyConfig({ maxPowerKW: 7, rampUpSeconds: 20, taperStartSoc: 70, batteryCapacityKWh: 80 });
       meterIntervalMs = 5000;
@@ -480,11 +469,21 @@
 
     uiFlags.starting = true;
     setStartLabel("Iniciando…");
+    
+    // Notifica que o EV foi conectado (Preparing) antes de iniciar a transação
+    // Isso é crucial para RemoteStartTransaction para evitar timeout_start no CSMS
     state.setState(ChargeState.Preparing);
+    sendStatus("Preparing", connectorId);
+    logLine(`[OCPP] StatusNotification.Preparing sent (Cable Plugged)`, "info");
+    
     setStatusBadge(state.state);
     setFlowHint("Iniciando sessão — Authorize ➜ StartTransaction ➜ Charging…");
     try {
-      await authorizeFlow(idTag);
+      if (!skipAuthorize) {
+        await authorizeFlow(idTag);
+      } else {
+        logLine(`[OCPP] Skipping Authorize for RemoteStart`, "info");
+      }
       let got = false;
       for (let tries = 1; tries <= 3; tries++) {
         logLine(`[OCPP] Start.watchdog.attempt=${tries}/3`, "info");
@@ -533,7 +532,7 @@
 
   function resetUiIndicators() {
     $("powerKW").textContent = format2(0);
-    $("voltageV").textContent = "0";
+    $("voltageV").textContent = Math.round(telemetry.nominalVoltage || 220);
     $("currentA").textContent = format2(0);
     $("energyKWh").textContent = format3(0);
     $("durationMin").textContent = 0;
@@ -760,7 +759,11 @@
     switch (action) {
       case "RemoteStartTransaction": {
         ocpp.sendResult(id, { status: "Accepted" });
-        startChargingSession({ idTag: String((payload && payload.idTag) || $("idTag").value || "IGEA-USER-001"), connectorId: Number((payload && payload.connectorId) || $("connectorId").value || 1) });
+        startChargingSession({ 
+          idTag: String((payload && payload.idTag) || $("idTag").value || "IGEA-USER-001"), 
+          connectorId: Number((payload && payload.connectorId) || $("connectorId").value || 1),
+          skipAuthorize: true
+        });
         break;
       }
       case "RemoteStopTransaction": {
@@ -963,27 +966,6 @@
     transactionId: function(){ try { return transactionId || null; } catch(e){ return null; } },
   };
   (function(){
-    try {
-      const s = window.getOcppWs && window.getOcppWs();
-      if (!s) return;
-      window._remoteHookEnabled = true;
-      s.addEventListener("message", function(ev){
-        let m;
-        try { m = JSON.parse(ev.data); } catch(e){ return; }
-        if (Array.isArray(m) && m[0] === 2 && m[2] === "RemoteStartTransaction"){
-          const uid = m[1];
-          const p = m[3] || {};
-          const idTag = String(p.idTag || window.DEFAULT_IDTAG || "IGEA-USER-001");
-          const connectorId = Number(p.connectorId || window.DEFAULT_CONNECTOR_ID || 1);
-          try { s.send(JSON.stringify([3, uid, { status: "Accepted" }])); } catch(e){}
-          try { window.startChargingSession({ idTag, connectorId }); } catch(e){}
-        }
-        if (Array.isArray(m) && m[0] === 2 && m[2] === "RemoteStopTransaction"){
-          const uid = m[1];
-          try { s.send(JSON.stringify([3, uid, { status: "Accepted" }])); } catch(e){}
-          try { window.stopTransactionFlow("Remote"); } catch(e){}
-        }
-      });
-    } catch(e){}
+    // IIFE de hooks remotos removida para evitar duplicidade
   })();
 })();

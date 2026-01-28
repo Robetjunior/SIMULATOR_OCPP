@@ -22,6 +22,7 @@ Desenvolvido com foco na experiência do desenvolvedor (DX), oferece uma interfa
   - Energia Consumida (kWh) com acumulador persistente por sessão
   - Temperatura (°C) e Estado de Carga (SoC %)
 - **Interatividade**:
+  - Simulação de conexão física do cabo ("Cabo Conectado ao EV").
   - Comandos Locais (Botões na UI) e Remotos (`RemoteStartTransaction`, `RemoteStopTransaction`)
   - Configuração dinâmica de endpoint, ID do carregador e IDTag
   - Visualização de logs em tempo real
