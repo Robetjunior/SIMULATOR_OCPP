@@ -23,7 +23,8 @@
   "license": "MIT",
   "scripts": {
     "start": "node server.js",
-    "simulate": "node runner.js"
+    "simulate": "node runner.js",
+    "postinstall": "npx puppeteer browsers install chrome"
   },
   "dependencies": {
     "puppeteer": "^24.36.1"

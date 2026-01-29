@@ -34,6 +34,9 @@ cd SIMULATOR_OCPP
 
 # Instalar as dependências do projeto
 npm install
+
+# Garantir que o navegador Chrome seja baixado (caso o npm install não o faça)
+npx puppeteer browsers install chrome
 ```
 
 ## 3. Executar a Simulação
