@@ -80,20 +80,16 @@ Parâmetros suportados:
 - `url`: Sobrescreve a URL do CSMS.
 
 ### Execução em VM (Modo Headless / Automático)
-Para rodar múltiplos simuladores em um servidor ou VM sem interface gráfica (ou para automatizar testes), utilize o script de execução incluído:
+Para rodar múltiplos simuladores em um servidor ou VM sem interface gráfica (ou para automatizar testes), utilize o script de execução incluído.
 
-1. Instale as dependências (incluindo Puppeteer):
-   ```bash
-   npm install
-   ```
+> **📄 Veja o guia completo de instalação:** [VM_TUTORIAL.md](./VM_TUTORIAL.md)
 
+Resumo rápido:
+1. Instale as dependências: `npm install`
 2. Execute o simulador automático:
    ```bash
    # Executa com os IDs padrão (DRBAKANA-TEST-03 e DRBAKANA-TEST-04)
    npm run simulate
-
-   # OU especifique IDs personalizados
-   npm run simulate MEU-ID-01 MEU-ID-02 MEU-ID-03
    ```
 
 O script irá:
