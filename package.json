@@ -22,6 +22,10 @@
   ],
   "license": "MIT",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "simulate": "node runner.js"
+  },
+  "dependencies": {
+    "puppeteer": "^24.36.1"
   }
 }

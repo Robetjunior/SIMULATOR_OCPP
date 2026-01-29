@@ -76,10 +76,33 @@ Exemplos de URLs (ajuste a porta 5510 se necessário):
 
 Parâmetros suportados:
 - `id` ou `cpId`: Define o ID do Charge Point.
-- `url`: Define a URL do CSMS.
-- `tag` ou `idTag`: Define a IDTag padrão do usuário.
-- `connector`: Define o ID do conector.
-- `auto`: Conecta automaticamente ao abrir.
+- `auto=1`: Conecta automaticamente ao CSMS ao carregar.
+- `url`: Sobrescreve a URL do CSMS.
+
+### Execução em VM (Modo Headless / Automático)
+Para rodar múltiplos simuladores em um servidor ou VM sem interface gráfica (ou para automatizar testes), utilize o script de execução incluído:
+
+1. Instale as dependências (incluindo Puppeteer):
+   ```bash
+   npm install
+   ```
+
+2. Execute o simulador automático:
+   ```bash
+   # Executa com os IDs padrão (DRBAKANA-TEST-03 e DRBAKANA-TEST-04)
+   npm run simulate
+
+   # OU especifique IDs personalizados
+   npm run simulate MEU-ID-01 MEU-ID-02 MEU-ID-03
+   ```
+
+O script irá:
+- Iniciar o servidor local automaticamente.
+- Abrir navegadores "invisíveis" (headless) para cada ID.
+- Exibir os logs de conexão no terminal.
+
+### Interatividade
+- **Logs**: O painel à direita mostra logs detalhados (envio/recebimento de mensagens OCPP).
 
 ### Uso Manual
 1. **Acesse a UI**: Abra `http://127.0.0.1:5510/`.
