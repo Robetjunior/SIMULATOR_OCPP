@@ -717,7 +717,7 @@
       totalCost: m.totalCost,
       pricePerKWh: m.pricePerKWh,
     };
-    const key = "ocpp.sessions";
+    const key = `ocpp.sessions.${$("chargePointId").value || "default"}`;
     const arr = JSON.parse(localStorage.getItem(key) || "[]");
     arr.push(item);
     localStorage.setItem(key, JSON.stringify(arr));
@@ -727,6 +727,7 @@
   function renderHistory(arr) {
     const ul = $("historyList");
     ul.innerHTML = "";
+    if (!arr) return;
     arr.slice().reverse().forEach((s) => {
       const li = document.createElement("li");
       li.innerHTML = `
@@ -741,13 +742,13 @@
   }
 
   function exportHistory() {
-    const key = "ocpp.sessions";
+    const key = `ocpp.sessions.${$("chargePointId").value || "default"}`;
     const arr = JSON.parse(localStorage.getItem(key) || "[]");
     const blob = new Blob([JSON.stringify(arr, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "sessions.json";
+    a.download = `sessions-${$("chargePointId").value || "default"}.json`;
     document.body.appendChild(a);
     a.click();
     URL.revokeObjectURL(url);
@@ -821,12 +822,26 @@
 
   // Bind UI
   function init() {
-    // Pre-popular campos com valores úteis
-    $("endpointUrl").value = "ws://127.0.0.1:3000/ocpp/CentralSystemService/DRBAKANA-TEST-03";
+    // Parse URL params
+    const params = new URLSearchParams(window.location.search);
+    const pCpId = params.get("id") || params.get("cpId");
+    const pUrl = params.get("url") || params.get("endpoint");
+    const pConn = params.get("connector") || params.get("connectorId");
+    const pTag = params.get("tag") || params.get("idTag");
+
+    // Pre-popular campos com valores úteis ou params
+    $("endpointUrl").value = pUrl || "ws://127.0.0.1:3000/ocpp/CentralSystemService/DRBAKANA-TEST-03";
     $("subprotocols").value = "ocpp1.6j";
-    $("chargePointId").value = "DRBAKANA-TEST-03";
-    $("connectorId").value = 1;
-    $("idTag").value = "IGEA-USER-001";
+    $("chargePointId").value = pCpId || "DRBAKANA-TEST-03";
+    $("connectorId").value = pConn || 1;
+    $("idTag").value = pTag || "IGEA-USER-001";
+    
+    // Ajusta endpoint se CP ID mudou via param mas URL não
+    if (pCpId && !pUrl && $("endpointUrl").value.includes("CentralSystemService/")) {
+        const parts = $("endpointUrl").value.split("CentralSystemService/");
+        $("endpointUrl").value = `${parts[0]}CentralSystemService/${pCpId}`;
+    }
+
     $("meterStart").value = 0;
     $("meterStop").value = 0;
     $("pricePerKWh").value = telemetry.pricePerKWh;
@@ -837,8 +852,9 @@
     if ($("meterIntervalSec")) $("meterIntervalSec").value = 10;
     if ($("realProfile")) $("realProfile").checked = true;
 
-    // History inicial
-    renderHistory(JSON.parse(localStorage.getItem("ocpp.sessions") || "[]"));
+    // History inicial isolado
+    const key = `ocpp.sessions.${$("chargePointId").value || "default"}`;
+    renderHistory(JSON.parse(localStorage.getItem(key) || "[]"));
 
     $("btnConnect").onclick = () => {
       const url = buildUrl();
@@ -919,20 +935,15 @@
   document.addEventListener("DOMContentLoaded", init);
   // Auto-conectar ao carregar para realizar verificações no CP solicitado
   document.addEventListener("DOMContentLoaded", () => {
-    const cpIdInput = $("chargePointId");
-    if (cpIdInput && !cpIdInput.value) cpIdInput.value = "DRBAKANA-TEST-03";
-    const spInput = $("subprotocols");
-    if (spInput && !spInput.value) spInput.value = "ocpp1.6j,ocpp1.6";
-    const connInput = $("connectorId");
-    if (connInput && !connInput.value) connInput.value = "1";
-    const idTagInput = $("idTag");
-    if (idTagInput && !idTagInput.value) idTagInput.value = "IGEA-USER-001";
-    const urlInput = $("endpointUrl");
-    if (urlInput && !urlInput.value) urlInput.value = `ws://35.231.137.231:3000/ocpp/CentralSystemService/${cpIdInput?.value || "DRBAKANA-TEST-03"}`;
+    // Valores já tratados no init via URL params ou defaults
     window.DEFAULT_IDTAG = $("idTag").value || "IGEA-USER-001";
     window.DEFAULT_CONNECTOR_ID = Number($("connectorId").value || 1);
-    setTimeout(() => { if ($("btnConnect")) $("btnConnect").click(); }, 300);
-    // setTimeout(() => { if ($("btnStart")) $("btnStart").click(); }, 2000);
+    
+    // Auto-conectar apenas se flag 'autoconnect' estiver na URL
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("autoconnect") || params.has("auto")) {
+      setTimeout(() => { if ($("btnConnect")) $("btnConnect").click(); }, 300);
+    }
   });
   startTransactionFlow = startChargingSession;
   window.startTransactionFlow = startTransactionFlow;
