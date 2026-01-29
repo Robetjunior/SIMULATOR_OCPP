@@ -66,11 +66,13 @@ O simulador estará disponível em: `http://127.0.0.1:5510/`
 ### Múltiplos Carregadores (Abas do Navegador)
 Para simular múltiplos carregadores simultaneamente, você pode abrir o simulador em várias abas usando parâmetros na URL para pré-configurar cada um.
 
-Exemplos de URLs:
+Exemplos de URLs (ajuste a porta 5510 se necessário):
 - **Carregador 1**: `http://127.0.0.1:5510/?id=CP-001`
 - **Carregador 2**: `http://127.0.0.1:5510/?id=CP-002`
 - **Conexão Automática**: Adicione `&auto=1` para conectar assim que a página abrir.
   - Ex: `http://127.0.0.1:5510/?id=CP-003&auto=1`
+
+**Nota**: A URL base padrão do CSMS agora é `ws://34.66.238.95/ocpp/CentralSystemService/`. Você pode sobrescrever isso com o parâmetro `url=...`.
 
 Parâmetros suportados:
 - `id` ou `cpId`: Define o ID do Charge Point.
