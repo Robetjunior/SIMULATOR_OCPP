@@ -39,6 +39,12 @@ npm install
 npx puppeteer browsers install chrome
 ```
 
+> **Nota:** Se receber erro de `Permission denied`, execute:
+> ```bash
+> chmod +x node_modules/.bin/puppeteer
+> npx puppeteer browsers install chrome
+> ```
+
 ## 3. Executar a Simulação
 
 Este comando irá iniciar o servidor e conectar automaticamente os carregadores **DRBAKANA-TEST-03** e **DRBAKANA-TEST-04**.
