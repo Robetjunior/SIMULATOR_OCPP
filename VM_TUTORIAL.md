@@ -46,25 +46,31 @@ npx puppeteer browsers install chrome
 > npx puppeteer browsers install chrome
 > ```
 
-## 3. Executar a Simulação
+## 4. Executar 24h (Produção com PM2)
 
-Este comando irá iniciar o servidor e conectar automaticamente os carregadores **DRBAKANA-TEST-03** e **DRBAKANA-TEST-04**.
+Para manter o simulador rodando 24h por dia, mesmo que você feche o terminal ou reinicie a VM, utilize o **PM2**.
 
+### 1. Instalar o PM2
 ```bash
-npm run simulate
+sudo npm install -g pm2
 ```
 
-### O que você verá:
-O terminal mostrará logs como:
-```text
-=== Iniciando Runner de Simulação OCPP ===
-IDs a serem simulados: DRBAKANA-TEST-03, DRBAKANA-TEST-04
-Iniciando servidor local...
-Servidor online em: PREVIEW_URL=http://127.0.0.1:5510/
-Iniciando navegador headless...
-[DRBAKANA-TEST-03] Conectando em: http://127.0.0.1:5510/?id=DRBAKANA-TEST-03&auto=1
-[DRBAKANA-TEST-04] Conectando em: http://127.0.0.1:5510/?id=DRBAKANA-TEST-04&auto=1
-...
+### 2. Iniciar o Simulador
+```bash
+pm2 start ecosystem.config.js
 ```
 
-Para encerrar a simulação, pressione `Ctrl + C`.
+### 3. Comandos Úteis do PM2
+- **Ver logs:** `pm2 logs`
+- **Ver status:** `pm2 status`
+- **Reiniciar:** `pm2 restart ocpp-simulator`
+- **Parar:** `pm2 stop ocpp-simulator`
+
+### 4. Configurar Inicialização Automática (Boot)
+Para que o simulador inicie automaticamente se a VM reiniciar:
+```bash
+pm2 startup
+# Copie e execute o comando que o PM2 exibir na tela
+pm2 save
+```
+
