@@ -82,14 +82,18 @@ Parâmetros suportados:
 ### Execução em VM (Modo Headless / Automático)
 Para rodar múltiplos simuladores em um servidor ou VM sem interface gráfica (ou para automatizar testes), utilize o script de execução incluído.
 
-> **📄 Veja o guia completo de instalação:** [VM_TUTORIAL.md](./VM_TUTORIAL.md)
+> **📄 Veja o guia completo de instalação e execução 24h:** [VM_TUTORIAL.md](./VM_TUTORIAL.md)
 
 Resumo rápido:
 1. Instale as dependências: `npm install`
-2. Execute o simulador automático:
+2. Instale o PM2 para execução contínua (opcional): `npm install pm2`
+3. Execute o simulador:
    ```bash
-   # Executa com os IDs padrão (DRBAKANA-TEST-03 e DRBAKANA-TEST-04)
+   # Execução simples
    npm run simulate
+
+   # Execução 24h (Produção)
+   npx pm2 start ecosystem.config.js
    ```
 
 O script irá:
