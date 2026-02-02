@@ -50,27 +50,36 @@ npx puppeteer browsers install chrome
 
 Para manter o simulador rodando 24h por dia, mesmo que você feche o terminal ou reinicie a VM, utilize o **PM2**.
 
-### 1. Instalar o PM2
+### 1. Instalar o PM2 (Localmente)
+Como o `sudo npm` pode não funcionar em alguns ambientes, vamos instalar o PM2 dentro do projeto:
+
 ```bash
-sudo npm install -g pm2
+npm install pm2
 ```
 
 ### 2. Iniciar o Simulador
+Use o comando `npx` para rodar o PM2 local:
+
 ```bash
-pm2 start ecosystem.config.js
+npx pm2 start ecosystem.config.js
 ```
 
 ### 3. Comandos Úteis do PM2
-- **Ver logs:** `pm2 logs`
-- **Ver status:** `pm2 status`
-- **Reiniciar:** `pm2 restart ocpp-simulator`
-- **Parar:** `pm2 stop ocpp-simulator`
+- **Ver logs:** `npx pm2 logs`
+- **Ver status:** `npx pm2 status`
+- **Reiniciar:** `npx pm2 restart ocpp-simulator`
+- **Parar:** `npx pm2 stop ocpp-simulator`
 
 ### 4. Configurar Inicialização Automática (Boot)
-Para que o simulador inicie automaticamente se a VM reiniciar:
+Para que o simulador inicie automaticamente se a VM reinicializar:
+
 ```bash
-pm2 startup
-# Copie e execute o comando que o PM2 exibir na tela
-pm2 save
+npx pm2 startup
+```
+*Copie e execute o comando (sudo...) que aparecerá na tela.*
+
+Depois, salve a lista de processos atuais:
+```bash
+npx pm2 save
 ```
 
