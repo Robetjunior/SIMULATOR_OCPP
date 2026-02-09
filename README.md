@@ -72,7 +72,7 @@ Exemplos de URLs (ajuste a porta 5510 se necessário):
 - **Conexão Automática**: Adicione `&auto=1` para conectar assim que a página abrir.
   - Ex: `http://127.0.0.1:5510/?id=CP-003&auto=1`
 
-**Nota**: A URL base padrão do CSMS agora é `ws://34.66.238.95/ocpp/CentralSystemService/`. Você pode sobrescrever isso com o parâmetro `url=...`.
+**Nota**: A URL base padrão do CSMS agora é `ws://34.66.238.95:80/ocpp/CentralSystemService/`. Você pode sobrescrever isso com o parâmetro `url=...`.
 
 Parâmetros suportados:
 - `id` ou `cpId`: Define o ID do Charge Point.
