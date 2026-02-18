@@ -10,7 +10,8 @@ module.exports = {
     max_memory_restart: '1G',
     env: {
       NODE_ENV: "production",
-      PORT: 5510
+      PORT: 5510,
+      CSMS_URL: "ws://34.66.238.95:80/ocpp/CentralSystemService/"
     }
   }]
 };

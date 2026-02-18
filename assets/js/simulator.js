@@ -837,7 +837,7 @@
     $("idTag").value = pTag || "IGEA-USER-001";
     
     // Ajusta endpoint se CP ID mudou via param mas URL não
-    if (pCpId && !pUrl && $("endpointUrl").value.includes("CentralSystemService/")) {
+    if (pCpId && $("endpointUrl").value.includes("CentralSystemService/")) {
         const parts = $("endpointUrl").value.split("CentralSystemService/");
         $("endpointUrl").value = `${parts[0]}CentralSystemService/${pCpId}`;
     }
