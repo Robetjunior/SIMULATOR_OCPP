@@ -11,7 +11,7 @@ module.exports = {
     env: {
       NODE_ENV: "production",
       PORT: 5510,
-      CSMS_URL: "ws://34.66.238.95:80/ocpp/CentralSystemService/"
+      CSMS_URL: "ws://34.60.202.171:80/ocpp/CentralSystemService/"
     }
   }]
 };

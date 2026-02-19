@@ -5,7 +5,7 @@ const { spawn } = require('child_process');
 const PORT = process.env.PORT || 5510;
 const HOST = '127.0.0.1';
 const BASE_URL = `http://${HOST}:${PORT}/`;
-const CSMS_URL = process.env.CSMS_URL || 'ws://34.66.238.95:80/ocpp/CentralSystemService/';
+const CSMS_URL = process.env.CSMS_URL || 'ws://34.60.202.171:80/ocpp/CentralSystemService/';
 
 // IDs padrão se não forem passados via argumentos
 // Exemplo de uso: node runner.js CP001 CP002 CP003

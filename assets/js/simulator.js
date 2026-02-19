@@ -830,7 +830,7 @@
     const pTag = params.get("tag") || params.get("idTag");
 
     // Pre-popular campos com valores úteis ou params
-    $("endpointUrl").value = pUrl || "ws://34.66.238.95:80/ocpp/CentralSystemService/DRBAKANA-TEST-03";
+    $("endpointUrl").value = pUrl || "ws://34.60.202.171:80/ocpp/CentralSystemService/DRBAKANA-TEST-03";
     $("subprotocols").value = "ocpp1.6j";
     $("chargePointId").value = pCpId || "DRBAKANA-TEST-03";
     $("connectorId").value = pConn || 1;
