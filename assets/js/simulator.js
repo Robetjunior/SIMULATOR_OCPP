@@ -9,8 +9,12 @@
   function logLine(text, dir = "info") {
     const out = $("logOutput");
     const ts = new Date().toLocaleTimeString();
-    out.textContent += `[${ts}] ${dir.toUpperCase()} ${text}\n`;
-    out.scrollTop = out.scrollHeight;
+    const logMsg = `[${ts}] ${dir.toUpperCase()} ${text}`;
+    if (out) {
+      out.textContent += logMsg + "\n";
+      out.scrollTop = out.scrollHeight;
+    }
+    console.log(logMsg);
   }
 
   function setStatusBadge(state) {
@@ -98,7 +102,7 @@
       const id = this.nextId();
       const frame = [2, id, action, payload];
       const raw = JSON.stringify(frame);
-      try { console.log('[OCPP] CALL.out', { action, payload, rawFrame: frame }); } catch(e){}
+      try { console.log(`[OCPP] CALL.out ${action} ${JSON.stringify(payload)}`); } catch(e){}
       this.ws.send(raw);
       logLine(`=> ${action} ${JSON.stringify(payload)}`, "out");
       return new Promise((resolve, reject) => {
@@ -186,6 +190,30 @@
   const setWsStatus = (text) => { const el = $("wsStatus"); if (el) el.textContent = text || ""; };
   const setFlowHint = (text) => { const el = $("flowHint"); if (el) el.textContent = text || ""; };
   let meterIntervalMs = 5000;
+  let reconnectTimer = null;
+  let reconnectAttempt = 0;
+  let manualDisconnect = false;
+  let autoReconnectEnabled = false;
+
+  function clearReconnectTimer() {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+  }
+
+  function scheduleReconnect(connectFn) {
+    if (!autoReconnectEnabled || manualDisconnect || reconnectTimer) return;
+    reconnectAttempt += 1;
+    const delayMs = Math.min(15000, Math.max(1000, 1000 * Math.pow(2, Math.min(reconnectAttempt - 1, 4))));
+    setWsStatus(`Reconectando em ${Math.ceil(delayMs / 1000)}s…`);
+    setFlowHint(`CSMS indisponivel — tentativa ${reconnectAttempt}`);
+    logLine(`WebSocket fechado. Agendando reconexão em ${delayMs}ms (tentativa ${reconnectAttempt}).`, "err");
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connectFn(true);
+    }, delayMs);
+  }
 
   let goalModalShown = false;
   function showGoalModal(percent) {
@@ -856,13 +884,16 @@
     const key = `ocpp.sessions.${$("chargePointId").value || "default"}`;
     renderHistory(JSON.parse(localStorage.getItem(key) || "[]"));
 
-    $("btnConnect").onclick = () => {
+    const connectFlow = (isReconnect = false) => {
       const url = buildUrl();
       const subs = getSubprotocols();
       if (!url) {
         logLine("Endpoint inválido. Configure URL e Id CP.", "err");
         return;
       }
+      manualDisconnect = false;
+      autoReconnectEnabled = true;
+      clearReconnectTimer();
       const attempts = [];
       if (subs && subs.length > 1) {
         attempts.push(subs);
@@ -876,13 +907,22 @@
       let idx = 0;
       const tryNext = () => {
         const s = attempts[idx] || attempts[attempts.length - 1];
-        setWsStatus("Conectando…");
-        logLine(`Tentando conectar ${url} com subprotocol(s): ${s.join(",")}`, "info");
+        setWsStatus(isReconnect ? "Reconectando…" : "Conectando…");
+        logLine(`Tentando conectar ${url} com subprotocol(s): ${s.join(",")}`, isReconnect ? "err" : "info");
         let opened = false;
         ocpp = new OCPPClient({
           url,
           subprotocols: s,
-          onOpen: () => { opened = true; setWsStatus("Conectado"); setFlowHint("Conectado — enviando BootNotification…"); logLine(`[OCPP] BootNotification.sent`, "info"); bootSequence(); installRemoteHook(); },
+          onOpen: () => {
+            opened = true;
+            reconnectAttempt = 0;
+            clearReconnectTimer();
+            setWsStatus("Conectado");
+            setFlowHint("Conectado — enviando BootNotification…");
+            logLine(`[OCPP] BootNotification.sent`, "info");
+            bootSequence();
+            installRemoteHook();
+          },
           onClose: () => {
             if (!opened && idx < attempts.length - 1) {
               idx += 1;
@@ -891,6 +931,7 @@
               return;
             }
             setWsStatus("Desconectado");
+            scheduleReconnect(() => connectFlow(true));
           },
           onMessage: handleInbound,
         });
@@ -899,7 +940,15 @@
       tryNext();
     };
 
+    $("btnConnect").onclick = () => {
+      connectFlow(false);
+    };
+
     $("btnDisconnect").onclick = () => {
+      manualDisconnect = true;
+      autoReconnectEnabled = false;
+      reconnectAttempt = 0;
+      clearReconnectTimer();
       if (ocpp) ocpp.disconnect();
     };
 
