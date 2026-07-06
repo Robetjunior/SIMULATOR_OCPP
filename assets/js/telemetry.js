@@ -1,49 +1,78 @@
-// Gerador de telemetria realística
-// Potência (kW): ramp-up 10–30s, platô próximo ao máximo, taper nos últimos 10–15% de SoC
-// Tensão (V): fixo com pequena variação
-// Corrente (A): P = V * I
-// Energia (kWh): integral da potência
-// Temperatura (°C): cresce lentamente com ruído
-// SoC (%): incremento progressivo com taper
+// Gerador de telemetria realística e determinística quando seed é informada.
+// A energia acumulada sempre deriva da potência, evitando divergência entre
+// Power.Active.Import, Current.Import e Energy.Active.Import.Register.
 
 class Telemetry {
   constructor(config = {}) {
-    this.maxPowerKW = config.maxPowerKW ?? 7.0; // ex.: 7 kW AC
-    this.nominalVoltage = config.nominalVoltage ?? 400; // ex.: 400 V
-    this.maxCurrentA = config.maxCurrentA ?? 16; // limite do conector
+    this.maxPowerKW = config.maxPowerKW ?? 7.0;
+    this.nominalVoltage = config.nominalVoltage ?? 230;
+    this.maxCurrentA = config.maxCurrentA ?? 32;
     this.rampUpSeconds = config.rampUpSeconds ?? 20;
-    this.taperStartSoc = config.taperStartSoc ?? 70; // inicia taper
-    this.targetSoc = config.targetSoc ?? 80; // termina sessão ao atingir
+    this.taperStartSoc = config.taperStartSoc ?? 70;
+    this.targetSoc = config.targetSoc ?? 80;
+    this.initialSoc = config.initialSoc ?? 20;
     this.tempBase = config.tempBase ?? 28.0;
-    this.tempRate = config.tempRate ?? 0.02; // °C/s
+    this.tempRate = config.tempRate ?? 0.02;
     this.pricePerKWh = config.pricePerKWh ?? 1.99;
-    this.batteryCapacityKWh = config.batteryCapacityKWh ?? 80; // capacidade da bateria
-    this.timeTargetMin = config.timeTargetMin ?? 5; // concluir em até 5 min
+    this.batteryCapacityKWh = config.batteryCapacityKWh ?? 80;
+    this.timeTargetMin = config.timeTargetMin ?? 5;
     this.startSoc = null;
+    this.seed = null;
+    this.random = Math.random;
+
+    if (config.seed != null) {
+      this.setSeed(config.seed);
+    }
 
     this.reset();
   }
 
+  createSeededRandom(seed) {
+    let state = (Number(seed) >>> 0) || 1;
+    return () => {
+      state = (1664525 * state + 1013904223) >>> 0;
+      return state / 0x100000000;
+    };
+  }
+
+  setSeed(seed) {
+    this.seed = Number(seed);
+    this.random = this.createSeededRandom(this.seed);
+  }
+
   reset() {
     this.elapsedSec = 0;
-    this.energyWh = 0; // acumulado
+    this.energyWh = 0;
     this.powerKW = 0;
-    this.voltageV = this.nominalVoltage; // Mantém tensão nominal mesmo em repouso
+    this.voltageV = this.nominalVoltage;
     this.currentA = 0;
     this.temperatureC = this.tempBase;
-    this.soc = 20; // estado inicial de carga
+    this.soc = this.initialSoc;
     this.sessionStart = null;
     this.running = false;
+    this.paused = false;
   }
 
   start(now = Date.now()) {
     this.sessionStart = now;
     this.running = true;
+    this.paused = false;
     this.startSoc = this.soc;
   }
 
   stop() {
     this.running = false;
+    this.paused = false;
+    this.powerKW = 0;
+    this.currentA = 0;
+  }
+
+  setPaused(paused) {
+    this.paused = Boolean(paused);
+    if (this.paused) {
+      this.powerKW = 0;
+      this.currentA = 0;
+    }
   }
 
   setPricePerKWh(p) {
@@ -55,6 +84,11 @@ class Telemetry {
     this.targetSoc = Math.min(100, Math.max(this.taperStartSoc, target));
   }
 
+  setInitialSoc(soc) {
+    if (!isFinite(soc)) return;
+    this.initialSoc = Math.max(0, Math.min(100, Number(soc)));
+  }
+
   applyConfig(cfg = {}) {
     if (cfg.maxPowerKW != null) this.maxPowerKW = cfg.maxPowerKW;
     if (cfg.nominalVoltage != null) this.nominalVoltage = cfg.nominalVoltage;
@@ -62,77 +96,56 @@ class Telemetry {
     if (cfg.rampUpSeconds != null) this.rampUpSeconds = cfg.rampUpSeconds;
     if (cfg.taperStartSoc != null) this.taperStartSoc = cfg.taperStartSoc;
     if (cfg.targetSoc != null) this.setSocTarget(cfg.targetSoc);
+    if (cfg.initialSoc != null) this.setInitialSoc(cfg.initialSoc);
     if (cfg.tempBase != null) this.tempBase = cfg.tempBase;
     if (cfg.tempRate != null) this.tempRate = cfg.tempRate;
     if (cfg.batteryCapacityKWh != null) this.batteryCapacityKWh = Math.max(1, cfg.batteryCapacityKWh);
     if (cfg.timeTargetMin != null) this.timeTargetMin = Math.max(1, cfg.timeTargetMin);
+    if (cfg.seed != null) this.setSeed(cfg.seed);
   }
 
-  // Atualiza em dt segundos
+  noise(amp) {
+    return (this.random() - 0.5) * amp * 2;
+  }
+
   update(dt) {
     if (!this.running) {
       return this.snapshot();
     }
+
     this.elapsedSec += dt;
 
-    // Ruídos pequenos
-    const noise = (amp) => (Math.random() - 0.5) * amp * 2;
+    if (this.paused) {
+      this.voltageV = Math.max(210, this.nominalVoltage + this.noise(2));
+      this.currentA = 0;
+      this.powerKW = 0;
+      this.temperatureC = Math.max(this.tempBase, this.temperatureC - 0.01 * dt);
+      return this.snapshot();
+    }
 
-    // Ramp-up
-    const rampFactor = Math.min(1, this.elapsedSec / this.rampUpSeconds);
+    const rampFactor = Math.min(1, this.elapsedSec / Math.max(1, this.rampUpSeconds));
 
-    // Taper baseado no SoC
     let taperFactor = 1;
     if (this.soc >= this.taperStartSoc) {
-      const range = 100 - this.taperStartSoc;
-      const x = (this.soc - this.taperStartSoc) / range; // 0..1
-      taperFactor = Math.max(0.1, 1 - x * 0.9); // reduz até ~10%
+      const range = Math.max(1, 100 - this.taperStartSoc);
+      const x = (this.soc - this.taperStartSoc) / range;
+      taperFactor = Math.max(0.1, 1 - x * 0.9);
     }
 
-    // Potência alvo com ramp + taper
     let targetPowerKW = this.maxPowerKW * rampFactor * taperFactor;
-    targetPowerKW = Math.max(0, targetPowerKW + noise(0.05));
+    targetPowerKW = Math.max(0, targetPowerKW + this.noise(0.05));
 
-    // Deriva tensão: pequena variação em torno do nominal
-    this.voltageV = Math.max(210, this.nominalVoltage + noise(3));
-
-    // Corrente derivada (limitada)
-    this.currentA = Math.min(this.maxCurrentA, (targetPowerKW * 1000) / this.voltageV);
+    this.voltageV = Math.max(210, this.nominalVoltage + this.noise(3));
+    this.currentA = Math.min(this.maxCurrentA, (targetPowerKW * 1000) / Math.max(1, this.voltageV));
     this.powerKW = (this.voltageV * this.currentA) / 1000;
 
-    // Energia física base (Wh) se fosse tempo real
-    const powerW = this.powerKW * 1000;
-    const dWh_physical = (powerW * dt) / 3600;
+    const deltaWh = (this.powerKW * 1000 * dt) / 3600;
+    this.energyWh += Math.max(0, deltaWh);
 
-    // Temperatura
-    this.temperatureC += this.tempRate * dt + noise(0.02);
+    this.temperatureC = Math.max(this.tempBase, this.temperatureC + this.tempRate * dt + this.noise(0.02));
 
-    // SoC: incremento proporcional à energia relativa à capacidade + garantia por tempo-alvo
-    const dKWh_physical = dWh_physical / 1000;
-    const dSocEnergy = (dKWh_physical / this.batteryCapacityKWh) * 100;
-    
-    let dSocTime = 0;
-    if (this.timeTargetMin && this.startSoc != null) {
-      const remainingSoc = Math.max(0, this.targetSoc - this.soc);
-      const remainingSec = Math.max(1, this.timeTargetMin * 60 - this.elapsedSec);
-      const plannedRatePerSec = (this.targetSoc - this.startSoc) / (this.timeTargetMin * 60);
-      dSocTime = Math.min(remainingSoc, plannedRatePerSec * dt);
-    }
-    
-    // Determina o passo real de SoC (máximo entre físico e acelerado)
-    const dSoc_actual = Math.max(dSocEnergy, dSocTime);
-    this.soc = Math.min(this.targetSoc, Math.min(100, this.soc + dSoc_actual));
-
-    // Ajusta Energia para refletir o ganho de SoC (para simulação realista acelerada)
-    // Se dSoc_actual > dSocEnergy, significa que aceleramos o tempo. 
-    // A energia deve acompanhar o SoC ganho na bateria.
-    const dKWh_actual = (dSoc_actual / 100) * this.batteryCapacityKWh;
-    const dWh_actual = dKWh_actual * 1000;
-    
-    this.energyWh += dWh_actual;
-
-    // Suspensão se potência ~0 por alguns segundos (simulação simplificada)
-    // Tratamento de suspensão é feito pela máquina de estados externamente.
+    const deltaSoc = ((deltaWh / 1000) / this.batteryCapacityKWh) * 100;
+    this.soc = Math.min(this.targetSoc, Math.min(100, this.soc + Math.max(0, deltaSoc)));
 
     return this.snapshot();
   }
@@ -153,6 +166,8 @@ class Telemetry {
       pricePerKWh: this.pricePerKWh,
       totalCost,
       sessionStart: this.sessionStart,
+      paused: this.paused,
+      seed: this.seed,
     };
   }
 }

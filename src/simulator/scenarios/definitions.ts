@@ -1,0 +1,73 @@
+import type { SessionScenario } from "../core/types";
+
+export const scenarioDefinitions: Record<string, SessionScenario> = {
+  normal: {
+    name: "normal",
+    includeSoc: true,
+    includeTemperature: true,
+    meterIntervalSec: 10,
+    heartbeatIntervalSec: 60,
+    stopReason: "Local",
+  },
+  ev_pause: {
+    name: "ev_pause",
+    includeSoc: true,
+    includeTemperature: true,
+    pauseReason: "SuspendedEV",
+    pauseAtSec: 20,
+    pauseDurationSec: 10,
+    meterIntervalSec: 10,
+    heartbeatIntervalSec: 60,
+    stopReason: "Local",
+  },
+  evse_pause: {
+    name: "evse_pause",
+    includeSoc: true,
+    includeTemperature: true,
+    pauseReason: "SuspendedEVSE",
+    pauseAtSec: 20,
+    pauseDurationSec: 10,
+    meterIntervalSec: 10,
+    heartbeatIntervalSec: 60,
+    stopReason: "Local",
+  },
+  fault: {
+    name: "fault",
+    includeSoc: true,
+    includeTemperature: true,
+    injectFaultAtSec: 25,
+    faultCode: "GroundFailure",
+    meterIntervalSec: 10,
+    heartbeatIntervalSec: 60,
+    stopReason: "Other",
+  },
+  postpaid_full: {
+    name: "postpaid_full",
+    includeSoc: true,
+    includeTemperature: true,
+    meterIntervalSec: 5,
+    heartbeatIntervalSec: 60,
+    stopReason: "Local",
+    postpaid: true,
+  },
+  missing_soc: {
+    name: "missing_soc",
+    includeSoc: false,
+    includeTemperature: true,
+    meterIntervalSec: 10,
+    heartbeatIntervalSec: 60,
+    stopReason: "Local",
+  },
+  missing_temperature: {
+    name: "missing_temperature",
+    includeSoc: true,
+    includeTemperature: false,
+    meterIntervalSec: 10,
+    heartbeatIntervalSec: 60,
+    stopReason: "Local",
+  },
+};
+
+export function getScenarioDefinition(name = "normal"): SessionScenario {
+  return scenarioDefinitions[name] || scenarioDefinitions.normal;
+}

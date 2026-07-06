@@ -47,6 +47,22 @@
           <input id="idTag" type="text" placeholder="USUARIO-123" />
         </label>
         <label>
+          Cenário
+          <select id="scenarioName">
+            <option value="normal">normal</option>
+            <option value="ev_pause">ev_pause</option>
+            <option value="evse_pause">evse_pause</option>
+            <option value="fault">fault</option>
+            <option value="postpaid_full">postpaid_full</option>
+            <option value="missing_soc">missing_soc</option>
+            <option value="missing_temperature">missing_temperature</option>
+          </select>
+        </label>
+        <label>
+          Seed Replay
+          <input id="seedValue" type="number" value="12345" />
+        </label>
+        <label>
           Meter Start (Wh)
           <input id="meterStart" type="number" value="0" />
         </label>
@@ -72,7 +88,7 @@
         </label>
         <label style="align-items:center; flex-direction:row; gap:8px;">
           <input id="realProfile" type="checkbox" />
-          <span>Perfil Real (AC) — sem SoC; fases/location</span>
+          <span>Perfil Real (AC) — omite SoC e Temperature</span>
         </label>
         <label style="align-items:center; flex-direction:row; gap:8px;">
           <input id="cableConnected" type="checkbox" checked />

@@ -16,13 +16,28 @@ class StateMachine {
   constructor(onChange) {
     this.state = ChargeState.Available;
     this.onChange = typeof onChange === "function" ? onChange : () => {};
+    this.allowedTransitions = {
+      Available: [ChargeState.Preparing, ChargeState.Faulted, ChargeState.Unavailable],
+      Preparing: [ChargeState.Charging, ChargeState.Available, ChargeState.Faulted, ChargeState.Unavailable],
+      Charging: [ChargeState.SuspendedEV, ChargeState.SuspendedEVSE, ChargeState.Finishing, ChargeState.Faulted],
+      SuspendedEV: [ChargeState.Charging, ChargeState.Finishing, ChargeState.Faulted],
+      SuspendedEVSE: [ChargeState.Charging, ChargeState.Finishing, ChargeState.Faulted],
+      Finishing: [ChargeState.Available, ChargeState.Faulted],
+      Unavailable: [ChargeState.Available, ChargeState.Faulted],
+      Faulted: [ChargeState.Available, ChargeState.Unavailable],
+    };
   }
 
   setState(next) {
     if (this.state === next) return;
+    const allowed = this.allowedTransitions[this.state] || [];
+    if (!allowed.includes(next)) {
+      return false;
+    }
     const prev = this.state;
     this.state = next;
     this.onChange({ prev, next });
+    return true;
   }
 
   authorizeAccepted() {
@@ -35,6 +50,8 @@ class StateMachine {
 
   suspendEV() { this.setState(ChargeState.SuspendedEV); }
   suspendEVSE() { this.setState(ChargeState.SuspendedEVSE); }
+  fault() { this.setState(ChargeState.Faulted); }
+  unavailable() { this.setState(ChargeState.Unavailable); }
   resume() {
     // volta para Charging
     this.setState(ChargeState.Charging);
