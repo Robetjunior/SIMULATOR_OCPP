@@ -8,6 +8,7 @@ const BASE_URL = `http://${HOST}:${PORT}/`;
 const CSMS_URL = process.env.CSMS_URL || 'ws://34.60.202.171:80/ocpp/CentralSystemService/';
 const SIM_SCENARIO = process.env.SIM_SCENARIO || 'normal';
 const SIM_SEED = process.env.SIM_SEED || '12345';
+const SIM_REAL_PROFILE = process.env.SIM_REAL_PROFILE || 'false';
 
 // IDs padrão se não forem passados via argumentos
 // Exemplo de uso: node runner.js CP001 CP002 CP003
@@ -63,7 +64,7 @@ async function startBrowser() {
             });
 
             // URL com auto-connect
-            const targetUrl = `${BASE_URL}?id=${id}&auto=1&url=${encodeURIComponent(CSMS_URL)}&scenario=${encodeURIComponent(SIM_SCENARIO)}&seed=${encodeURIComponent(SIM_SEED)}`;
+            const targetUrl = `${BASE_URL}?id=${id}&auto=1&url=${encodeURIComponent(CSMS_URL)}&scenario=${encodeURIComponent(SIM_SCENARIO)}&seed=${encodeURIComponent(SIM_SEED)}&realProfile=${encodeURIComponent(SIM_REAL_PROFILE)}`;
             console.log(`[${id}] Conectando em: ${targetUrl}`);
             
             await page.goto(targetUrl, { waitUntil: 'networkidle0' });

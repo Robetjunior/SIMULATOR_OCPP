@@ -247,6 +247,14 @@
     return scenario || SCENARIOS.normal;
   }
 
+  function parseBooleanParam(value) {
+    if (value == null) return null;
+    const normalized = String(value).trim().toLowerCase();
+    if (["1", "true", "yes", "on"].includes(normalized)) return true;
+    if (["0", "false", "no", "off"].includes(normalized)) return false;
+    return null;
+  }
+
   function getMeasurementFlags(realProfile) {
     const scenario = getScenarioDefinition();
     const includeSoc = scenario.includeSoc !== false && !realProfile;
@@ -513,10 +521,18 @@
     const fastInitialSoc = Math.max(20, Math.min(targetSoc - 1, targetSoc - 10));
     const seed = Number(($("seedValue") && $("seedValue").value) || Date.now());
     const scenario = getScenarioDefinition();
+    const measurementFlags = getMeasurementFlags(realProfile);
     currentFault = null;
     sessionTimeline = [];
     activeScenarioName = scenario.name;
-    recordTimeline("session_start_requested", { connectorId, idTag, scenario: activeScenarioName, realProfile });
+    recordTimeline("session_start_requested", {
+      connectorId,
+      idTag,
+      scenario: activeScenarioName,
+      realProfile,
+      includeSoc: measurementFlags.includeSoc,
+      includeTemperature: measurementFlags.includeTemperature,
+    });
     telemetry.reset();
     telemetry.setPricePerKWh(Number($("pricePerKWh").value || telemetry.pricePerKWh));
     telemetry.applyConfig({ targetSoc, initialSoc: 20, timeTargetMin: 5, seed });
@@ -551,6 +567,7 @@
     setStartLabel("Iniciando…");
     transitionState(ChargeState.Preparing, { connectorId, sendStatus: true });
     logLine(`[OCPP] StatusNotification.Preparing sent (Cable Plugged)`, "info");
+    logLine(`[OCPP] Session.measurements realProfile=${realProfile} includeSoc=${measurementFlags.includeSoc} includeTemperature=${measurementFlags.includeTemperature} scenario=${scenario.name}`, "info");
     setFlowHint("Iniciando sessão — Authorize ➜ StartTransaction ➜ Charging…");
     try {
       if (!skipAuthorize) {
@@ -942,6 +959,7 @@
     const pTag = params.get("tag") || params.get("idTag");
     const pScenario = params.get("scenario");
     const pSeed = params.get("seed");
+    const pRealProfile = parseBooleanParam(params.get("realProfile"));
 
     // Pre-popular campos com valores úteis ou params
     $("endpointUrl").value = pUrl || "ws://34.60.202.171:80/ocpp/CentralSystemService/DRBAKANA-TEST-03";
@@ -964,7 +982,7 @@
 
     // Defaults para novos controles
     if ($("meterIntervalSec")) $("meterIntervalSec").value = 10;
-    if ($("realProfile")) $("realProfile").checked = true;
+    if ($("realProfile")) $("realProfile").checked = pRealProfile === null ? false : pRealProfile;
     if ($("scenarioName")) {
       $("scenarioName").value = pScenario && SCENARIOS[pScenario] ? pScenario : "normal";
       activeScenarioName = $("scenarioName").value;
