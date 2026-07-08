@@ -537,17 +537,33 @@
     telemetry.setPricePerKWh(Number($("pricePerKWh").value || telemetry.pricePerKWh));
     telemetry.applyConfig({ targetSoc, initialSoc: 20, timeTargetMin: 5, seed });
     if (fastMode) {
-      telemetry.applyConfig({
-        maxPowerKW: 50,
-        rampUpSeconds: 2,
-        taperStartSoc: 95,
-        batteryCapacityKWh: 12,
-        nominalVoltage: 400,
-        maxCurrentA: 125,
-        initialSoc: fastInitialSoc,
-      });
-      meterIntervalMs = 2000;
-      setFlowHint(`Modo rápido ativo — SoC inicial ${fastInitialSoc}% e meta ${targetSoc}% para concluir em cerca de 1min30s.`);
+      if (targetSoc >= 100) {
+        telemetry.applyConfig({
+          maxPowerKW: 180,
+          rampUpSeconds: 1,
+          taperStartSoc: 99,
+          batteryCapacityKWh: 12,
+          nominalVoltage: 400,
+          maxCurrentA: 450,
+          initialSoc: 20,
+          timeTargetMin: 5,
+        });
+        meterIntervalMs = 2000;
+        setFlowHint(`Modo turbo ativo — meta ${targetSoc}% para concluir em até 5min.`);
+      } else {
+        telemetry.applyConfig({
+          maxPowerKW: 50,
+          rampUpSeconds: 2,
+          taperStartSoc: 95,
+          batteryCapacityKWh: 12,
+          nominalVoltage: 400,
+          maxCurrentA: 125,
+          initialSoc: fastInitialSoc,
+          timeTargetMin: 1.5,
+        });
+        meterIntervalMs = 2000;
+        setFlowHint(`Modo rápido ativo — SoC inicial ${fastInitialSoc}% e meta ${targetSoc}% para concluir em cerca de 1min30s.`);
+      }
     } else {
       telemetry.applyConfig({ maxPowerKW: 7, rampUpSeconds: 20, taperStartSoc: 70, batteryCapacityKWh: 40, nominalVoltage: 230, maxCurrentA: 32, initialSoc: 20 });
       meterIntervalMs = 5000;
@@ -960,6 +976,8 @@
     const pScenario = params.get("scenario");
     const pSeed = params.get("seed");
     const pRealProfile = parseBooleanParam(params.get("realProfile"));
+    const pFastMode = parseBooleanParam(params.get("fastMode"));
+    const pTargetSoc = params.get("targetSoc");
 
     // Pre-popular campos com valores úteis ou params
     $("endpointUrl").value = pUrl || "ws://34.60.202.171:80/ocpp/CentralSystemService/DRBAKANA-TEST-03";
@@ -983,6 +1001,11 @@
     // Defaults para novos controles
     if ($("meterIntervalSec")) $("meterIntervalSec").value = 10;
     if ($("realProfile")) $("realProfile").checked = pRealProfile === null ? false : pRealProfile;
+    if ($("fastMode")) $("fastMode").checked = pFastMode === null ? false : pFastMode;
+    if ($("targetSoc") && pTargetSoc != null && pTargetSoc !== "") {
+      const v = Number(pTargetSoc);
+      if (isFinite(v)) $("targetSoc").value = String(Math.max(50, Math.min(100, v)));
+    }
     if ($("scenarioName")) {
       $("scenarioName").value = pScenario && SCENARIOS[pScenario] ? pScenario : "normal";
       activeScenarioName = $("scenarioName").value;
